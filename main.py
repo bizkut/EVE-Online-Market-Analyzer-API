@@ -93,47 +93,11 @@ async def lifespan(app: FastAPI):
     redis = aioredis.from_url(redis_url)
     FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
 
-    # --- Initial Data Population and Analysis ---
-    # This runs once on startup to ensure the database is populated.
-    # In a production environment, this might be handled by an init container
-    # or a one-off Celery task trigger. For simplicity, we run it here.
-    async def initial_setup():
-        logger.info("Performing initial data and analysis check...")
-        try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT EXISTS (SELECT 1 FROM market_history);")
-                history_exists = cur.fetchone()[0]
-
-                if not history_exists:
-                    cur.close() # Close cursor before long-running task
-                    logger.info("No market history data found. Triggering initial data pipeline run...")
-                    # Note: This is a blocking call on startup.
-                    # Consider triggering this asynchronously.
-                    await data_pipeline.run_data_pipeline()
-                    logger.info("Initial data pipeline run complete.")
-
-                    logger.info("Triggering initial analysis run...")
-                    await analysis.run_analysis()
-                    logger.info("Initial analysis run complete.")
-                else:
-                    cur.execute("SELECT EXISTS (SELECT 1 FROM market_analysis);")
-                    analysis_exists = cur.fetchone()[0]
-                    cur.close()
-                    if not analysis_exists:
-                        logger.info("Market data found, but no analysis. Triggering initial analysis run...")
-                        await analysis.run_analysis()
-                        logger.info("Initial analysis run complete.")
-                    else:
-                        logger.info("Existing data and analysis found. Skipping initial run.")
-
-        except Exception as e:
-            logger.error(f"Failed during initial data setup: {e}", exc_info=True)
-            # Log and continue; Celery Beat will run the tasks later.
-
-    await initial_setup()
-
-    logger.info("Celery services will handle background tasks. No in-app scheduler started.")
+    # On startup, the API server no longer triggers data pipeline or analysis.
+    # This responsibility is now fully delegated to the Celery Beat scheduler,
+    # which will trigger the tasks periodically. This ensures the API server
+    # starts quickly and does not perform long-running, blocking tasks.
+    logger.info("Celery services will handle all background tasks. No in-app scheduler started.")
     yield
     # On shutdown
     logger.info("Application shutdown...")
