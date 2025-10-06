@@ -233,9 +233,19 @@ def cleanup_old_data():
         logger.info(f"Removed {result.rowcount} old market history records.")
 
 async def run_data_pipeline():
-    """Main async function to run the data pipeline."""
-    await process_market_orders()
-    await process_market_history()
+    """
+    Main async function to run the data pipeline.
+    Fetches market orders and market history concurrently.
+    """
+    logger.info("Starting concurrent data fetching for market orders and history...")
+    # Run market order and history processing concurrently
+    await asyncio.gather(
+        process_market_orders(),
+        process_market_history()
+    )
+    logger.info("Concurrent data fetching finished.")
+
+    # After fetching, clean up old data
     cleanup_old_data()
     logger.info("Data pipeline run finished.")
 
