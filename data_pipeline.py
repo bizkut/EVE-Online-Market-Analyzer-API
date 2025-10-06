@@ -6,7 +6,8 @@ import pandas as pd
 import aiohttp
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
-from database import engine  # Import the shared engine
+from database import engine
+from logging_config import logger
 
 # --- Configuration ---
 MARKET_ORDERS_URL = "https://data.everef.net/market-orders/market-orders-latest.v3.csv.bz2"
@@ -22,7 +23,7 @@ async def fetch_url(session, url):
             response.raise_for_status()
             return await response.read()
     except aiohttp.ClientError as e:
-        print(f"Error fetching {url}: {e}")
+        logger.error(f"Error fetching {url}: {e}", exc_info=True)
         return None
 
 def decompress_bz2(data):
@@ -32,14 +33,14 @@ def decompress_bz2(data):
 # --- Data Fetching and Processing ---
 async def process_market_orders():
     """Downloads, processes, and updates market orders."""
-    print("Fetching latest market orders...")
+    logger.info("Fetching latest market orders...")
     async with aiohttp.ClientSession() as session:
         bz2_data = await fetch_url(session, MARKET_ORDERS_URL)
         if not bz2_data:
-            print("Failed to download market orders.")
+            logger.warning("Failed to download market orders.")
             return
 
-    print("Decompressing and parsing market orders...")
+    logger.info("Decompressing and parsing market orders...")
     csv_file = decompress_bz2(bz2_data)
     df = pd.read_csv(csv_file)
 
@@ -47,22 +48,22 @@ async def process_market_orders():
     df['issued'] = pd.to_datetime(df['issued'])
     df['http_last_modified'] = pd.to_datetime(df['http_last_modified'])
 
-    print(f"Loaded {len(df)} market orders.")
+    logger.info(f"Loaded {len(df)} market orders.")
 
     # Update database (truncate and load)
     with engine.connect() as conn:
         conn.execute(text("TRUNCATE TABLE market_orders;"))
         df.to_sql('market_orders', conn, if_exists='append', index=False, chunksize=10000)
         conn.commit()
-    print("Market orders table updated successfully.")
+    logger.info("Market orders table updated successfully.")
 
 async def process_market_history():
     """Downloads, processes, and updates market history for the last 90 days."""
-    print("Fetching market history totals...")
+    logger.info("Fetching market history totals...")
     async with aiohttp.ClientSession() as session:
         totals_data = await fetch_url(session, TOTALS_JSON_URL)
         if not totals_data:
-            print("Failed to fetch market history totals.")
+            logger.warning("Failed to fetch market history totals.")
             return
 
     available_dates_str = json.loads(totals_data).keys()
@@ -71,7 +72,7 @@ async def process_market_history():
     today = datetime.now(timezone.utc).date()
     date_range = [today - timedelta(days=i) for i in range(DATA_RETENTION_DAYS)]
 
-    print(f"Checking for history data for the past {DATA_RETENTION_DAYS} days...")
+    logger.info(f"Checking for history data for the past {DATA_RETENTION_DAYS} days...")
     async with aiohttp.ClientSession() as session:
         for date_obj in date_range:
             date_str = date_obj.strftime('%Y-%m-%d')
@@ -90,10 +91,10 @@ async def process_market_history():
                 df = pd.read_csv(csv_file)
                 all_history_df.append(df)
             except Exception as e:
-                print(f"Could not process a history file: {e}")
+                logger.error(f"Could not process a history file: {e}", exc_info=True)
 
     if not all_history_df:
-        print("No new market history data found.")
+        logger.info("No new market history data found.")
         return
 
     history_df = pd.concat(all_history_df, ignore_index=True)
@@ -102,7 +103,7 @@ async def process_market_history():
     history_df['date'] = pd.to_datetime(history_df['date'])
     history_df['http_last_modified'] = pd.to_datetime(history_df['http_last_modified'])
 
-    print(f"Loaded {len(history_df)} total market history records.")
+    logger.info(f"Loaded {len(history_df)} total market history records.")
 
     # Insert into a temporary table first
     with engine.connect() as conn:
@@ -125,25 +126,25 @@ async def process_market_history():
         conn.execute(text("DROP TABLE market_history_temp;"))
         conn.commit()
 
-    print("Market history table updated successfully.")
+    logger.info("Market history table updated successfully.")
 
 def cleanup_old_data():
     """Removes data older than the retention period."""
-    print("Cleaning up old market data...")
+    logger.info("Cleaning up old market data...")
     ninety_days_ago = datetime.now(timezone.utc).date() - timedelta(days=DATA_RETENTION_DAYS)
 
     with engine.connect() as conn:
         delete_sql = text("DELETE FROM market_history WHERE date < :date;")
         result = conn.execute(delete_sql, {"date": ninety_days_ago.strftime('%Y-%m-%d')})
         conn.commit()
-        print(f"Removed {result.rowcount} old market history records.")
+        logger.info(f"Removed {result.rowcount} old market history records.")
 
 async def main():
     """Main function to run the data pipeline."""
     await process_market_orders()
     await process_market_history()
     cleanup_old_data()
-    print("Data pipeline run finished.")
+    logger.info("Data pipeline run finished.")
 
 if __name__ == "__main__":
     asyncio.run(main())

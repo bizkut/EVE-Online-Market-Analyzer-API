@@ -1,8 +1,5 @@
-import logging
-logging.basicConfig(filename='app.log', level=logging.DEBUG)
-logging.debug("Starting application...")
-
-from fastapi import FastAPI, HTTPException, Query
+import os
+from fastapi import FastAPI, HTTPException, Query, Depends, Header
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import List, Optional
@@ -10,19 +7,34 @@ from datetime import datetime, timezone
 import asyncio
 from contextlib import asynccontextmanager
 
+# Centralized logging
+from logging_config import logger
+
 # Caching imports
 from fastapi_cache import FastAPICache
-from fastapi_cache.backends.inmemory import InMemoryBackend
+from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.decorator import cache
+from redis import asyncio as aioredis
 
 # Import project modules
-logging.debug("Importing project modules...")
 import analysis
 import predict
 import data_pipeline
+import esi_utils
 from database import get_db_connection
 from scheduler import start_scheduler, stop_scheduler
-logging.debug("Project modules imported.")
+
+
+# --- Security ---
+API_KEY = os.getenv("API_KEY")
+
+async def verify_api_key(x_api_key: str = Header(None)):
+    """Dependency to verify the API key. Key is optional."""
+    if API_KEY: # Only enforce the key if it's set in the environment
+        if x_api_key is None:
+            raise HTTPException(status_code=400, detail="X-API-Key header missing")
+        if x_api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid API Key")
 
 # --- Pydantic Models for API Responses ---
 class ItemAnalysis(BaseModel):
@@ -38,6 +50,7 @@ class ItemAnalysis(BaseModel):
     avg_daily_volume: Optional[float]
     volatility_30d: Optional[float]
     trend_direction: Optional[int]
+    price_volume_correlation: Optional[float]
     last_updated: datetime
 
 class ItemDetail(BaseModel):
@@ -66,76 +79,81 @@ class Region(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # On startup
-    logging.debug("Application startup...")
-    FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
+    logger.info("Application startup...")
+    esi_utils.pre_populate_caches_from_db()
+
+    # Initialize Redis cache
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
+    redis = aioredis.from_url(redis_url)
+    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+
     start_scheduler()
     yield
     # On shutdown
-    logging.debug("Application shutdown...")
+    logger.info("Application shutdown...")
     stop_scheduler()
 
 # --- App Initialization ---
-logging.debug("Initializing FastAPI app...")
 app = FastAPI(
     title="EVE Online Market Profitability API",
     description="Analyzes EVE Online market data to find profitable trading opportunities.",
     version="1.0.0",
     lifespan=lifespan
 )
-logging.debug("FastAPI app initialized.")
-
-# --- Placeholder Data ---
-ITEM_NAMES = {
-    34: "Tritanium",
-    20: "Small Shield Booster I"
-}
-REGION_NAMES = {
-    10000001: "The Forge",
-    10000002: "Jita"
-}
 
 # --- API Endpoints ---
 @app.get("/api/top-items", response_model=List[ItemAnalysis])
 @cache(expire=3600)  # Cache for 1 hour
 async def get_top_items(
     limit: int = Query(100, ge=1, le=1000),
-    region: int = Query(10000001, description="EVE Online region ID.")
+    region: int = Query(10000001, description="EVE Online region ID."),
+    min_volume: Optional[float] = Query(None, description="Minimum average daily volume."),
+    min_roi: Optional[float] = Query(None, description="Minimum Return on Investment (ROI) in percent.")
 ):
     try:
         results_df = await run_in_threadpool(analysis.analyze_market_data, region)
+
+        # Apply filters
+        if min_volume is not None:
+            results_df = results_df[results_df['avg_daily_volume'] >= min_volume]
+        if min_roi is not None:
+            results_df = results_df[results_df['roi_percent'] >= min_roi]
+
         if results_df.empty:
             return []
 
         top_items = results_df.head(limit).to_dict(orient='records')
 
+        # Fetch predictions concurrently
         prediction_tasks = [
             run_in_threadpool(predict.predict_next_day_prices, item['type_id'], region) for item in top_items
         ]
         predictions = await asyncio.gather(*prediction_tasks)
 
-        response_items = []
-        for i, item in enumerate(top_items):
-            prediction_result = predictions[i]
-            response_items.append(
-                ItemAnalysis(
-                    type_id=item['type_id'],
-                    region_id=region,
-                    item_name=ITEM_NAMES.get(item['type_id'], f"Unknown Item ({item['type_id']})"),
-                    avg_buy_price=item.get('avg_buy_price'),
-                    avg_sell_price=item.get('avg_sell_price'),
-                    predicted_buy_price=prediction_result.get('predicted_buy_price'),
-                    predicted_sell_price=prediction_result.get('predicted_sell_price'),
-                    profit_per_unit=item.get('profit_per_unit'),
-                    roi_percent=item.get('roi_percent'),
-                    avg_daily_volume=item.get('avg_daily_volume'),
-                    volatility_30d=item.get('volatility_30d'),
-                    trend_direction=item.get('trend_direction'),
-                    last_updated=datetime.now(timezone.utc)
-                )
+        # Helper to build response items concurrently
+        async def create_response_item(item, prediction_result):
+            item_name = await esi_utils.get_item_name(item['type_id'])
+            return ItemAnalysis(
+                type_id=item['type_id'],
+                region_id=region,
+                item_name=item_name,
+                avg_buy_price=item.get('avg_buy_price'),
+                avg_sell_price=item.get('avg_sell_price'),
+                predicted_buy_price=prediction_result.get('predicted_buy_price'),
+                predicted_sell_price=prediction_result.get('predicted_sell_price'),
+                profit_per_unit=item.get('profit_per_unit'),
+                roi_percent=item.get('roi_percent'),
+                avg_daily_volume=item.get('avg_daily_volume'),
+                volatility_30d=item.get('volatility_30d'),
+                trend_direction=item.get('trend_direction'),
+                price_volume_correlation=item.get('price_volume_correlation'),
+                last_updated=datetime.now(timezone.utc)
             )
-        return response_items
+
+        response_tasks = [create_response_item(top_items[i], predictions[i]) for i in range(len(top_items))]
+        return await asyncio.gather(*response_tasks)
     except Exception as e:
-        logging.error("Error in get_top_items", exc_info=True)
+        logger.error(f"Error in get_top_items: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/api/item/{type_id}", response_model=ItemDetail)
@@ -148,12 +166,16 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
         raise HTTPException(status_code=404, detail="Item not found or no profitable trades available.")
 
     item = item_data.iloc[0].to_dict()
-    prediction_result = await run_in_threadpool(predict.predict_next_day_prices, type_id, region_id)
+
+    # Concurrently fetch prediction and item name
+    prediction_task = run_in_threadpool(predict.predict_next_day_prices, type_id, region_id)
+    item_name_task = esi_utils.get_item_name(type_id)
+    prediction_result, item_name = await asyncio.gather(prediction_task, item_name_task)
 
     analysis_data = ItemAnalysis(
         type_id=type_id,
         region_id=region_id,
-        item_name=ITEM_NAMES.get(type_id, f"Unknown Item ({type_id})"),
+        item_name=item_name,
         avg_buy_price=item.get('avg_buy_price'),
         avg_sell_price=item.get('avg_sell_price'),
         predicted_buy_price=prediction_result.get('predicted_buy_price'),
@@ -163,19 +185,23 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
         avg_daily_volume=item.get('avg_daily_volume'),
         volatility_30d=item.get('volatility_30d'),
         trend_direction=item.get('trend_direction'),
+        price_volume_correlation=item.get('price_volume_correlation'),
         last_updated=datetime.now(timezone.utc)
     )
 
     return ItemDetail(
         type_id=type_id,
         region_id=region_id,
-        item_name=ITEM_NAMES.get(type_id, f"Unknown Item ({type_id})"),
+        item_name=item_name,
         analysis=analysis_data,
         prediction_confidence=prediction_result.get('confidence_score')
     )
 
-@app.post("/api/refresh", response_model=RefreshStatus)
+@app.post("/api/refresh", response_model=RefreshStatus, dependencies=[Depends(verify_api_key)])
 async def force_refresh():
+    """
+    Triggers a manual refresh of the market datasets, protected by an API key.
+    """
     try:
         # Run the pipeline in the background to avoid blocking the response
         asyncio.create_task(data_pipeline.main())
@@ -203,8 +229,11 @@ def get_system_status():
         return SystemStatus(status="error", latest_market_order_update=None, latest_market_history_update=None)
 
 @app.get("/api/regions", response_model=List[Region])
-def get_regions():
-    return [Region(region_id=rid, name=name) for rid, name in REGION_NAMES.items()]
+async def get_regions():
+    """
+    Returns a list of all available regions from the ESI.
+    """
+    return await esi_utils.get_all_regions()
 
 @app.get("/")
 async def root():
@@ -212,5 +241,6 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    logging.debug("Starting Uvicorn server...")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # The centralized logger is already configured, so we just run the server.
+    # The log level is handled by the logging_config module.
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2 import sql
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
+from logging_config import logger
 
 load_dotenv()
 
@@ -18,7 +19,6 @@ def get_db_connection():
 
 def initialize_database():
     """Initializes the database by creating necessary tables if they don't exist."""
-    # This function can continue to use a raw connection for setup.
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -61,11 +61,19 @@ def initialize_database():
         );
     """)
 
-    # Create regions table
+    # Create regions table (used for caching region names)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS regions (
             region_id INT PRIMARY KEY,
             name VARCHAR(255) UNIQUE
+        );
+    """)
+
+    # Create item_names table (used for caching item names)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS item_names (
+            type_id INT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL
         );
     """)
 
@@ -77,7 +85,7 @@ def initialize_database():
     conn.commit()
     cur.close()
     conn.close()
-    print("Database initialized successfully.")
+    logger.info("Database initialized successfully.")
 
 if __name__ == "__main__":
     initialize_database()
