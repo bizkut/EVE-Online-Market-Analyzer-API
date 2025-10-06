@@ -1,10 +1,11 @@
 import pandas as pd
 from sqlalchemy import text
-from database import engine  # Import the shared engine
+from database import engine
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
+from datetime import datetime
 
 def get_item_history(type_id: int, region_id: int, days: int = 90) -> pd.DataFrame:
     """Retrieves market history for a specific item in a region for the last N days."""
@@ -22,6 +23,24 @@ def get_item_history(type_id: int, region_id: int, days: int = 90) -> pd.DataFra
     df.set_index('date', inplace=True)
     return df
 
+def _calculate_trend(df: pd.DataFrame) -> int:
+    """Calculates the trend direction for a given history DataFrame."""
+    df = df.dropna(subset=['price']).copy()
+    if len(df) < 2:
+        return 0
+    # Create a numeric representation of the date for regression
+    df['date_ordinal'] = df.index.map(datetime.toordinal)
+    try:
+        # Fit a linear regression to the price data
+        coeffs = np.polyfit(df['date_ordinal'], df['price'], 1)
+        slope = coeffs[0]
+        # Classify the trend based on the slope
+        if slope > 0.1: return 1
+        if slope < -0.1: return -1
+        return 0
+    except np.linalg.LinAlgError:
+        return 0
+
 def create_features(df: pd.DataFrame) -> pd.DataFrame:
     """Creates features for the prediction model."""
     if df.empty or len(df) < 30:
@@ -32,6 +51,9 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
     df['volume_7d'] = df['volume'].rolling(window=7).mean()
     df['volatility_7d'] = df['price'].rolling(window=7).std()
 
+    # Calculate trend direction over the last 30 days
+    df['trend_direction'] = df['price'].rolling(window=30).apply(_calculate_trend, raw=False)
+
     # Target variable: next day's price
     df['target_price'] = df['price'].shift(-1)
 
@@ -41,8 +63,6 @@ def create_features(df: pd.DataFrame) -> pd.DataFrame:
 def predict_next_day_prices(type_id: int, region_id: int):
     """
     Trains a model and predicts the next day's prices for an item.
-
-    Returns a dictionary with predicted prices and a confidence score.
     """
     history_df = get_item_history(type_id, region_id)
 
@@ -63,7 +83,7 @@ def predict_next_day_prices(type_id: int, region_id: int):
         }
 
     # Define features (X) and target (y)
-    features = ['avg_price_7d', 'avg_price_30d', 'volume_7d', 'volatility_7d']
+    features = ['avg_price_7d', 'avg_price_30d', 'volume_7d', 'volatility_7d', 'trend_direction']
     X = features_df[features]
     y = features_df['target_price']
 
@@ -83,7 +103,6 @@ def predict_next_day_prices(type_id: int, region_id: int):
     predicted_avg_price = model.predict(last_features)[0]
 
     # Derive buy/sell from predicted average and recent volatility
-    # This is an assumption, as we can't predict both directly from this model.
     last_volatility = last_features['volatility_7d'].iloc[0]
     spread = last_volatility * 0.5  # Assume spread is half of the weekly std dev
 
@@ -91,8 +110,8 @@ def predict_next_day_prices(type_id: int, region_id: int):
     predicted_sell_price = predicted_avg_price + spread
 
     return {
-        "predicted_buy_price": round(predicted_buy_price, 2),
-        "predicted_sell_price": round(predicted_sell_price, 2),
+        "predicted_buy_price": round(predicted_buy_price, 2) if pd.notna(predicted_buy_price) else None,
+        "predicted_sell_price": round(predicted_sell_price, 2) if pd.notna(predicted_sell_price) else None,
         "confidence_score": round(confidence, 2)
     }
 

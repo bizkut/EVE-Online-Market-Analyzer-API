@@ -1,6 +1,6 @@
 import logging
 import os
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, Header
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import List, Optional
@@ -17,11 +17,20 @@ from fastapi_cache.decorator import cache
 import analysis
 import predict
 import data_pipeline
+import sde_utils
 from database import get_db_connection
 from scheduler import start_scheduler, stop_scheduler
 
 # Use the Uvicorn logger
 logger = logging.getLogger("uvicorn.error")
+
+# --- Security ---
+API_KEY = os.getenv("API_KEY")
+
+async def verify_api_key(x_api_key: str = Header(...)):
+    """Dependency to verify the API key."""
+    if not API_KEY or x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
 
 # --- Pydantic Models for API Responses ---
 class ItemAnalysis(BaseModel):
@@ -37,6 +46,7 @@ class ItemAnalysis(BaseModel):
     avg_daily_volume: Optional[float]
     volatility_30d: Optional[float]
     trend_direction: Optional[int]
+    price_volume_correlation: Optional[float]
     last_updated: datetime
 
 class ItemDetail(BaseModel):
@@ -66,6 +76,7 @@ class Region(BaseModel):
 async def lifespan(app: FastAPI):
     # On startup
     logger.info("Application startup...")
+    sde_utils.load_sde_data()
     FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
     start_scheduler()
     yield
@@ -81,25 +92,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# --- Placeholder Data ---
-ITEM_NAMES = {
-    34: "Tritanium",
-    20: "Small Shield Booster I"
-}
-REGION_NAMES = {
-    10000001: "The Forge",
-    10000002: "Jita"
-}
+# Placeholder data removed, will be loaded from SDE
 
 # --- API Endpoints ---
 @app.get("/api/top-items", response_model=List[ItemAnalysis])
 @cache(expire=3600)  # Cache for 1 hour
 async def get_top_items(
     limit: int = Query(100, ge=1, le=1000),
-    region: int = Query(10000001, description="EVE Online region ID.")
+    region: int = Query(10000001, description="EVE Online region ID."),
+    min_volume: Optional[float] = Query(None, description="Minimum average daily volume."),
+    min_roi: Optional[float] = Query(None, description="Minimum Return on Investment (ROI) in percent.")
 ):
     try:
         results_df = await run_in_threadpool(analysis.analyze_market_data, region)
+
+        # Apply filters
+        if min_volume is not None:
+            results_df = results_df[results_df['avg_daily_volume'] >= min_volume]
+        if min_roi is not None:
+            results_df = results_df[results_df['roi_percent'] >= min_roi]
+
         if results_df.empty:
             return []
 
@@ -117,7 +129,7 @@ async def get_top_items(
                 ItemAnalysis(
                     type_id=item['type_id'],
                     region_id=region,
-                    item_name=ITEM_NAMES.get(item['type_id'], f"Unknown Item ({item['type_id']})"),
+                    item_name=sde_utils.get_item_name(item['type_id']),
                     avg_buy_price=item.get('avg_buy_price'),
                     avg_sell_price=item.get('avg_sell_price'),
                     predicted_buy_price=prediction_result.get('predicted_buy_price'),
@@ -127,6 +139,7 @@ async def get_top_items(
                     avg_daily_volume=item.get('avg_daily_volume'),
                     volatility_30d=item.get('volatility_30d'),
                     trend_direction=item.get('trend_direction'),
+                    price_volume_correlation=item.get('price_volume_correlation'),
                     last_updated=datetime.now(timezone.utc)
                 )
             )
@@ -150,7 +163,7 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
     analysis_data = ItemAnalysis(
         type_id=type_id,
         region_id=region_id,
-        item_name=ITEM_NAMES.get(type_id, f"Unknown Item ({type_id})"),
+        item_name=sde_utils.get_item_name(type_id),
         avg_buy_price=item.get('avg_buy_price'),
         avg_sell_price=item.get('avg_sell_price'),
         predicted_buy_price=prediction_result.get('predicted_buy_price'),
@@ -160,19 +173,23 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
         avg_daily_volume=item.get('avg_daily_volume'),
         volatility_30d=item.get('volatility_30d'),
         trend_direction=item.get('trend_direction'),
+        price_volume_correlation=item.get('price_volume_correlation'),
         last_updated=datetime.now(timezone.utc)
     )
 
     return ItemDetail(
         type_id=type_id,
         region_id=region_id,
-        item_name=ITEM_NAMES.get(type_id, f"Unknown Item ({type_id})"),
+        item_name=sde_utils.get_item_name(type_id),
         analysis=analysis_data,
         prediction_confidence=prediction_result.get('confidence_score')
     )
 
-@app.post("/api/refresh", response_model=RefreshStatus)
+@app.post("/api/refresh", response_model=RefreshStatus, dependencies=[Depends(verify_api_key)])
 async def force_refresh():
+    """
+    Triggers a manual refresh of the market datasets, protected by an API key.
+    """
     try:
         # Run the pipeline in the background to avoid blocking the response
         asyncio.create_task(data_pipeline.main())
@@ -201,7 +218,10 @@ def get_system_status():
 
 @app.get("/api/regions", response_model=List[Region])
 def get_regions():
-    return [Region(region_id=rid, name=name) for rid, name in REGION_NAMES.items()]
+    """
+    Returns a list of available regions from the SDE.
+    """
+    return sde_utils.get_all_regions()
 
 @app.get("/")
 async def root():

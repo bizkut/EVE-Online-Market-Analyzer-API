@@ -31,17 +31,10 @@ def get_market_history(region_id: int, days: int = 30) -> pd.DataFrame:
 def calculate_price_metrics(orders_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculates average buy and sell prices based on market orders.
-
-    NOTE: The definitions from the prompt for avg_buy_price and avg_sell_price
-    are counter-intuitive for calculating trading profit. A market-making
-    interpretation is used here for a more realistic profit calculation.
-    - avg_buy_price: The price you'd set a buy order for. Based on highest existing buy orders.
-    - avg_sell_price: The price you'd set a sell order for. Based on lowest existing sell orders.
     """
     buy_orders = orders_df[orders_df['is_buy_order'] == True].copy()
     sell_orders = orders_df[orders_df['is_buy_order'] == False].copy()
 
-    # Calculate avg buy price (from top 10% of buy orders)
     def get_avg_top_10_percent_price(df):
         if df.empty or len(df) < 2:
             return df['price'].mean() if not df.empty else np.nan
@@ -51,7 +44,6 @@ def calculate_price_metrics(orders_df: pd.DataFrame) -> pd.DataFrame:
 
     avg_buy_prices = buy_orders.groupby('type_id').apply(get_avg_top_10_percent_price, include_groups=False).to_frame('avg_buy_price').reset_index()
 
-    # Calculate avg sell price (from bottom 10% of sell orders)
     def get_avg_bottom_10_percent_price(df):
         if df.empty or len(df) < 2:
             return df['price'].mean() if not df.empty else np.nan
@@ -89,7 +81,17 @@ def calculate_history_metrics(history_df: pd.DataFrame) -> pd.DataFrame:
     trends_df = history_df.groupby('type_id').apply(get_trend, include_groups=False).reset_index()
     trends = trends_df.rename(columns={trends_df.columns[1]: 'trend_direction'})
 
+    # Calculate price-volume correlation
+    def get_correlation(df):
+        if len(df['price']) < 2 or len(df['volume']) < 2:
+            return 0.0
+        return df['price'].corr(df['volume'])
+
+    correlations = history_df.groupby('type_id').apply(get_correlation, include_groups=False).to_frame('price_volume_correlation').reset_index()
+
     history_metrics = pd.merge(history_metrics, trends, on='type_id', how='left')
+    history_metrics = pd.merge(history_metrics, correlations, on='type_id', how='left')
+
     return history_metrics
 
 def analyze_market_data(region_id: int):

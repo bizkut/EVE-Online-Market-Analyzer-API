@@ -5,10 +5,12 @@ This project is a FastAPI-based backend system that analyzes the EVE Online mark
 ## Features
 
 - **Data-Driven Analysis**: Utilizes Everef's market orders and history datasets for comprehensive market analysis.
-- **Profitability Metrics**: Calculates key metrics such as `profit_per_unit`, `roi_percent`, and a custom `profit_score` to rank items.
+- **Profitability Metrics**: Calculates key metrics such as `profit_per_unit`, `roi_percent`, `price_volume_correlation`, and a custom `profit_score` to rank items.
 - **Trend Analysis**: Determines market trends and volatility to inform trading decisions.
 - **Price Prediction**: Includes a simple machine learning model to predict next-day buy/sell prices.
 - **Scheduled Data Refreshes**: Automatically updates market data every hour to ensure freshness.
+- **Secure Refresh Endpoint**: Protects the data refresh endpoint with an API key.
+- **Advanced Filtering**: Allows filtering of top items by minimum volume and ROI.
 - **Caching**: Caches API responses to improve performance and reduce load.
 - **Containerized**: Fully containerized with Docker for easy and reliable deployment.
 
@@ -38,7 +40,7 @@ This is the recommended method for running the application, as it provides a con
     ```
 
 2.  **Create a `.env` file:**
-    Copy the example environment variables into a new `.env` file. This file will provide the necessary credentials to the application and database services.
+    Copy the example environment variables into a new `.env` file. You should change `your-secret-api-key` to a secure, private key.
     ```bash
     cp .env.example .env
     ```
@@ -48,7 +50,7 @@ This is the recommended method for running the application, as it provides a con
     docker-compose up --build
     ```
     This command will:
-    - Build the Docker image for the FastAPI application.
+    - Build the Docker image for the FastAPI application, including downloading the EVE SDE data.
     - Start the `web` (FastAPI) and `db` (PostgreSQL) services.
     - Automatically run the `entrypoint.sh` script, which waits for the database to be ready, initializes the schema, and runs the initial data pipeline.
 
@@ -62,11 +64,11 @@ Once the application is running, the interactive API documentation (Swagger UI) 
 
 | Endpoint                                   | Method | Description                                                |
 | ------------------------------------------ | ------ | ---------------------------------------------------------- |
-| `/api/top-items?limit=100&region=10000001` | GET    | Returns top profitable items with analysis and predictions |
-| `/api/item/{type_id}`                      | GET    | Returns detailed stats and trend data for an item          |
-| `/api/refresh`                             | POST   | Forces a dataset refresh and re-analysis (background task) |
-| `/api/status`                              | GET    | System health, dataset timestamps, and update status       |
-| `/api/regions`                             | GET    | List of available regions and names (placeholder data)     |
+| `/api/top-items` | GET    | Returns top profitable items with analysis and predictions. Supports filtering by `limit`, `region`, `min_volume`, and `min_roi`. |
+| `/api/item/{type_id}`                      | GET    | Returns detailed stats and trend data for an item.          |
+| `/api/refresh`                             | POST   | Forces a dataset refresh (background task). Requires a valid `X-API-Key` header. |
+| `/api/status`                              | GET    | System health, dataset timestamps, and update status.       |
+| `/api/regions`                             | GET    | List of all available regions from the SDE.                |
 
 ## Project Structure
 
@@ -84,13 +86,6 @@ Once the application is running, the interactive API documentation (Swagger UI) 
 ├── predict.py                   # Price prediction model
 ├── README.md                    # This file
 ├── requirements.txt             # Python dependencies
-└── scheduler.py                 # Scheduled data refresh logic
+├── scheduler.py                 # Scheduled data refresh logic
+└── sde_utils.py                 # EVE SDE data loading and utilities
 ```
-
-## Future Enhancements
-
--   **Populate Item and Region Names**: Replace the placeholder dictionaries with a proper data source, such as the EVE Online SDE (Static Data Export).
--   **Improve Prediction Model**: Enhance the prediction model with more features or a more sophisticated algorithm (e.g., Prophet, LSTMs).
--   **Add Authentication**: Secure the `/api/refresh` endpoint and any other sensitive endpoints.
--   **Implement Robust Caching**: Replace the in-memory cache with a more scalable solution like Redis.
--   **Add User-Facing Frontend**: Build a dashboard to visualize the market data and profitability insights.
