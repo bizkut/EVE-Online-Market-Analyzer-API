@@ -120,20 +120,21 @@ async def process_market_history():
     logger.info("Starting market history processing...")
 
     latest_db_date = get_latest_history_date()
-    today = datetime.now(timezone.utc).date()
+    # Fetch data only up to yesterday to avoid 404 errors for today's unpublished data
+    end_date = datetime.now(timezone.utc).date() - timedelta(days=1)
 
     if latest_db_date:
         start_date = latest_db_date + timedelta(days=1)
         logger.info(f"Resuming market history download from {start_date.strftime('%Y-%m-%d')}.")
     else:
-        start_date = today - timedelta(days=DATA_RETENTION_DAYS)
+        start_date = end_date - timedelta(days=DATA_RETENTION_DAYS)
         logger.info(f"No existing history data found. Starting initial download for the past {DATA_RETENTION_DAYS} days.")
 
-    if start_date > today:
+    if start_date > end_date:
         logger.info("Market history is already up-to-date.")
         return
 
-    days_to_fetch = (today - start_date).days + 1
+    days_to_fetch = (end_date - start_date).days + 1
     date_range = [start_date + timedelta(days=i) for i in range(days_to_fetch)]
 
     results = []
@@ -147,7 +148,7 @@ async def process_market_history():
         available_dates = set(json.loads(totals_data).keys())
 
         tasks = []
-        logger.info(f"Checking for available history files from {start_date.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}...")
+        logger.info(f"Checking for available history files from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}...")
         for date_obj in date_range:
             date_str = date_obj.strftime('%Y-%m-%d')
             if date_str in available_dates:
