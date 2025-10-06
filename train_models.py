@@ -9,6 +9,7 @@ import logging_config
 import joblib
 import os
 from pathlib import Path
+from celery_app import celery_app
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ def train_and_save_model(type_id: int, region_id: int):
     joblib.dump(model, model_path)
     logger.info(f"Successfully trained and saved model for {type_id} in {region_id} to {model_path}")
 
-def main():
+def run_model_training():
     """Main function to run the training process."""
     logger.info("Starting model training process...")
     items_to_train = get_distinct_items_for_training(min_days=MIN_DAYS_FOR_TRAINING)
@@ -128,5 +129,12 @@ def main():
 
     logger.info("Model training process finished.")
 
+@celery_app.task(name="train_models.run_model_training_task")
+def run_model_training_task():
+    """Celery task to run the model training process."""
+    logger.info("Executing run_model_training_task via Celery.")
+    run_model_training()
+    logger.info("Celery run_model_training_task finished.")
+
 if __name__ == "__main__":
-    main()
+    run_model_training()

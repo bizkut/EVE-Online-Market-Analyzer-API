@@ -25,7 +25,7 @@ import predict
 import data_pipeline
 import esi_utils
 from database import get_db_connection, engine
-from scheduler import start_scheduler, stop_scheduler
+from celery_app import celery_app
 
 
 # --- Security ---
@@ -94,7 +94,9 @@ async def lifespan(app: FastAPI):
     FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
 
     # --- Initial Data Population and Analysis ---
-    # This runs once on startup to ensure the database is populated before the scheduler starts.
+    # This runs once on startup to ensure the database is populated.
+    # In a production environment, this might be handled by an init container
+    # or a one-off Celery task trigger. For simplicity, we run it here.
     async def initial_setup():
         logger.info("Performing initial data and analysis check...")
         try:
@@ -106,11 +108,13 @@ async def lifespan(app: FastAPI):
                 if not history_exists:
                     cur.close() # Close cursor before long-running task
                     logger.info("No market history data found. Triggering initial data pipeline run...")
-                    await data_pipeline.main()
+                    # Note: This is a blocking call on startup.
+                    # Consider triggering this asynchronously.
+                    await data_pipeline.run_data_pipeline()
                     logger.info("Initial data pipeline run complete.")
-                    # After pipeline, analysis is required.
+
                     logger.info("Triggering initial analysis run...")
-                    await analysis.run_and_store_analysis_for_all_regions()
+                    await analysis.run_analysis()
                     logger.info("Initial analysis run complete.")
                 else:
                     cur.execute("SELECT EXISTS (SELECT 1 FROM market_analysis);")
@@ -118,23 +122,21 @@ async def lifespan(app: FastAPI):
                     cur.close()
                     if not analysis_exists:
                         logger.info("Market data found, but no analysis. Triggering initial analysis run...")
-                        await analysis.run_and_store_analysis_for_all_regions()
+                        await analysis.run_analysis()
                         logger.info("Initial analysis run complete.")
                     else:
                         logger.info("Existing data and analysis found. Skipping initial run.")
 
         except Exception as e:
             logger.error(f"Failed during initial data setup: {e}", exc_info=True)
-            # For now, we log and continue, the scheduler might fix it later.
+            # Log and continue; Celery Beat will run the tasks later.
 
-    # Run setup before starting the scheduler
     await initial_setup()
 
-    start_scheduler()
+    logger.info("Celery services will handle background tasks. No in-app scheduler started.")
     yield
     # On shutdown
     logger.info("Application shutdown...")
-    stop_scheduler()
 
 # --- App Initialization ---
 app = FastAPI(
@@ -260,19 +262,23 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
 @app.post("/api/refresh", response_model=RefreshStatus, dependencies=[Depends(verify_api_key)])
 async def force_refresh():
     """
-    Triggers a manual refresh of the market datasets and analysis, protected by an API key.
+    Triggers a manual refresh of the market datasets and analysis via Celery.
     """
     try:
-        async def refresh_task():
-            logger.info("Manual refresh: Starting data pipeline...")
-            await run_in_threadpool(data_pipeline.main)
-            logger.info("Manual refresh: Data pipeline finished. Starting analysis...")
-            await analysis.run_and_store_analysis_for_all_regions()
-            logger.info("Manual refresh: Analysis finished.")
+        logger.info("Manual refresh triggered. Chaining data pipeline and analysis tasks.")
+        # Chain the tasks: run analysis only after the data pipeline succeeds.
+        task_chain = (
+            data_pipeline.run_data_pipeline_task.s() |
+            analysis.run_analysis_task.s()
+        )
+        task_chain.apply_async()
 
-        asyncio.create_task(refresh_task())
-        return RefreshStatus(status="success", message="Full data and analysis refresh initiated in the background.")
+        return RefreshStatus(
+            status="success",
+            message="Full data and analysis refresh initiated in the background via Celery."
+        )
     except Exception as e:
+        logger.error(f"Failed to trigger Celery refresh task: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start refresh: {e}")
 
 @app.get("/api/status", response_model=SystemStatus)

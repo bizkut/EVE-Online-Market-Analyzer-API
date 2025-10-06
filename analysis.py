@@ -7,6 +7,8 @@ import logging
 import logging_config  # Ensure logging is configured
 from psycopg2.extras import execute_values
 import esi_utils # To get active regions
+import asyncio
+from celery_app import celery_app
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -196,7 +198,7 @@ def upsert_analysis_data(df: pd.DataFrame, region_id: int):
             conn.commit()
     logger.info(f"Successfully upserted {len(df)} rows of analysis data for region {region_id}.")
 
-async def run_and_store_analysis_for_all_regions():
+async def run_analysis():
     """
     Runs market analysis for all active regions and stores the results in the database.
     """
@@ -214,9 +216,15 @@ async def run_and_store_analysis_for_all_regions():
 
     logger.info("Completed market analysis for all active regions.")
 
+@celery_app.task(name="analysis.run_analysis_task")
+def run_analysis_task():
+    """Celery task to run the market analysis for all regions."""
+    logger.info("Executing run_analysis_task via Celery.")
+    asyncio.run(run_analysis())
+    logger.info("Celery run_analysis_task finished.")
+
 if __name__ == '__main__':
-    import asyncio
     logger.info("Running standalone market analysis for all regions...")
     # To run the async function from a synchronous main block
-    asyncio.run(run_and_store_analysis_for_all_regions())
+    asyncio.run(run_analysis())
     logger.info("Standalone market analysis finished.")

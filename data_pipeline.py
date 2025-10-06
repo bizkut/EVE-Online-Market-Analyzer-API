@@ -10,6 +10,7 @@ from database import engine
 from esi_utils import get_all_regions, fetch_esi_paginated, ESI_BASE_URL
 import logging
 import logging_config  # Ensure logging is configured
+from celery_app import celery_app
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -231,12 +232,21 @@ def cleanup_old_data():
         conn.commit()
         logger.info(f"Removed {result.rowcount} old market history records.")
 
-async def main():
-    """Main function to run the data pipeline."""
+async def run_data_pipeline():
+    """Main async function to run the data pipeline."""
     await process_market_orders()
     await process_market_history()
     cleanup_old_data()
     logger.info("Data pipeline run finished.")
 
+@celery_app.task(name="data_pipeline.run_data_pipeline_task")
+def run_data_pipeline_task():
+    """Celery task to run the full data pipeline."""
+    logger.info("Executing run_data_pipeline_task via Celery.")
+    asyncio.run(run_data_pipeline())
+    logger.info("Celery run_data_pipeline_task finished.")
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    # This allows running the script directly for testing or manual runs
+    logger.info("Running data pipeline directly.")
+    asyncio.run(run_data_pipeline())
