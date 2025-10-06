@@ -34,8 +34,12 @@ def decompress_bz2(data):
     return io.StringIO(bz2.decompress(data).decode('utf-8'))
 
 async def process_market_orders():
-    """Fetches market orders from the ESI API for all regions and updates the database."""
+    """
+    Fetches market orders from the ESI API for all regions and efficiently upserts them
+    into the database. Also removes orders that are no longer active.
+    """
     logger.info("Starting ESI market order processing...")
+    processing_start_time = datetime.now(timezone.utc)
     all_orders = []
 
     regions = await get_all_regions()
@@ -43,6 +47,7 @@ async def process_market_orders():
         logger.error("Could not retrieve region list. Aborting market order update.")
         return
 
+    successful_region_ids = []
     async with aiohttp.ClientSession() as session:
         for region in regions:
             region_id = region['region_id']
@@ -50,51 +55,66 @@ async def process_market_orders():
             url = f"{ESI_BASE_URL}/markets/{region_id}/orders/"
 
             orders = await fetch_esi_paginated(session, url)
-            if orders:
-                # Add region_id to each order
-                for order in orders:
-                    order['region_id'] = region_id
-                all_orders.extend(orders)
-                logger.info(f"Fetched {len(orders)} orders for region {region_id}.")
+            if orders is not None: # API call was successful, even if it returned no orders
+                successful_region_ids.append(region_id)
+                if orders:
+                    for order in orders:
+                        order['region_id'] = region_id
+                    all_orders.extend(orders)
+                    logger.info(f"Fetched {len(orders)} orders for region {region_id}.")
+                else:
+                    logger.info(f"No active orders found for region {region_id}.")
             else:
-                logger.warning(f"No orders found for region {region_id} or failed to fetch.")
+                logger.warning(f"Failed to fetch orders for region {region_id}.")
 
     if not all_orders:
-        logger.warning("No market orders were fetched from any region. Skipping database update.")
-        return
+        logger.warning("No market orders were fetched from any region. Skipping data upsert.")
+    else:
+        logger.info(f"Successfully fetched a total of {len(all_orders)} orders from all regions.")
+        df = pd.DataFrame(all_orders)
 
-    logger.info(f"Successfully fetched a total of {len(all_orders)} orders from all regions.")
+        df['issued'] = pd.to_datetime(df['issued'])
+        df['http_last_modified'] = processing_start_time
 
-    df = pd.DataFrame(all_orders)
+        final_columns = [
+            'order_id', 'type_id', 'location_id', 'volume_total', 'volume_remain',
+            'min_volume', 'price', 'is_buy_order', 'duration', 'issued',
+            'range', 'system_id', 'region_id', 'http_last_modified'
+        ]
+        for col in final_columns:
+            if col not in df.columns:
+                df[col] = None
+        df = df[final_columns]
 
-    # Data type conversion and column renaming
-    df['issued'] = pd.to_datetime(df['issued'])
-    # ESI does not provide a 'last modified' header per order, so we use the current time.
-    df['http_last_modified'] = datetime.now(timezone.utc)
+        logger.info("Upserting market orders into the database...")
+        with engine.connect() as conn:
+            df.to_sql('market_orders_temp', conn, if_exists='replace', index=False, chunksize=10000)
 
-    # Ensure all required columns are present and in the correct order
-    # The DB schema might have columns that ESI doesn't provide.
-    # We will need to adjust the DataFrame to match the table.
-    # Let's assume the table has at least these columns for now.
-    # In a real scenario, you would inspect the DB schema.
-    final_columns = [
-        'order_id', 'type_id', 'location_id', 'volume_total', 'volume_remain',
-        'min_volume', 'price', 'is_buy_order', 'duration', 'issued',
-        'range', 'region_id', 'http_last_modified'
-    ]
-    # Add missing columns with default values if they don't exist
-    for col in final_columns:
-        if col not in df.columns:
-            df[col] = None # Or a more sensible default
+            upsert_sql = text(f"""
+            INSERT INTO market_orders ({", ".join(final_columns)})
+            SELECT {", ".join(final_columns)} FROM market_orders_temp
+            ON CONFLICT (order_id) DO UPDATE SET
+                price = EXCLUDED.price,
+                volume_remain = EXCLUDED.volume_remain,
+                duration = EXCLUDED.duration,
+                range = EXCLUDED.range,
+                http_last_modified = EXCLUDED.http_last_modified;
+            """)
+            conn.execute(upsert_sql)
+            conn.execute(text("DROP TABLE market_orders_temp;"))
+            conn.commit()
+            logger.info(f"Upserted {len(df)} market orders.")
 
-    df = df[final_columns] # Ensure order and filter out extra columns
+    # Clean up stale orders from regions that were successfully processed
+    if successful_region_ids:
+        with engine.connect() as conn:
+            delete_sql = text("DELETE FROM market_orders WHERE region_id = ANY(:region_ids) AND http_last_modified < :timestamp")
+            result = conn.execute(delete_sql, {"region_ids": successful_region_ids, "timestamp": processing_start_time})
+            conn.commit()
+            if result.rowcount > 0:
+                logger.info(f"Removed {result.rowcount} stale market orders from processed regions.")
 
-    logger.info("Updating market orders in the database...")
-    with engine.connect() as conn:
-        conn.execute(text("TRUNCATE TABLE market_orders;"))
-        df.to_sql('market_orders', conn, if_exists='append', index=False, chunksize=10000)
-        conn.commit()
-    logger.info("Market orders table updated successfully.")
+    logger.info("Market order processing finished.")
 
 def get_latest_history_date():
     """Retrieves the most recent date from the market_history table."""
