@@ -93,47 +93,47 @@ async def lifespan(app: FastAPI):
     redis = aioredis.from_url(redis_url)
     FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
 
-    # --- Initial Data Population and Analysis ---
-    # This runs once on startup to ensure the database is populated.
-    # In a production environment, this might be handled by an init container
-    # or a one-off Celery task trigger. For simplicity, we run it here.
-    async def initial_setup():
-        logger.info("Performing initial data and analysis check...")
+    # --- Initial Data Population Trigger ---
+    # On startup, check if the database is empty. If it is, trigger an
+    # initial data fetch and analysis asynchronously using Celery.
+    # This ensures data is available as soon as possible without blocking
+    # the API server from starting.
+    async def trigger_initial_setup_if_needed():
+        logger.info("Performing initial data check...")
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("SELECT EXISTS (SELECT 1 FROM market_history);")
-                history_exists = cur.fetchone()[0]
+            def db_check():
+                """Synchronous function to check for data in the database."""
+                try:
+                    with get_db_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT EXISTS (SELECT 1 FROM market_history);")
+                        return cur.fetchone()[0]
+                except Exception:
+                    # This can happen if the table doesn't exist yet on the very first run.
+                    # In this case, we assume no data exists.
+                    logger.warning("Could not check for market history, assuming it's empty.")
+                    return False
 
-                if not history_exists:
-                    cur.close() # Close cursor before long-running task
-                    logger.info("No market history data found. Triggering initial data pipeline run...")
-                    # Note: This is a blocking call on startup.
-                    # Consider triggering this asynchronously.
-                    await data_pipeline.run_data_pipeline()
-                    logger.info("Initial data pipeline run complete.")
+            history_exists = await run_in_threadpool(db_check)
 
-                    logger.info("Triggering initial analysis run...")
-                    await analysis.run_analysis()
-                    logger.info("Initial analysis run complete.")
-                else:
-                    cur.execute("SELECT EXISTS (SELECT 1 FROM market_analysis);")
-                    analysis_exists = cur.fetchone()[0]
-                    cur.close()
-                    if not analysis_exists:
-                        logger.info("Market data found, but no analysis. Triggering initial analysis run...")
-                        await analysis.run_analysis()
-                        logger.info("Initial analysis run complete.")
-                    else:
-                        logger.info("Existing data and analysis found. Skipping initial run.")
+            if not history_exists:
+                logger.info("No market history data found. Triggering initial data pipeline and analysis task chain via Celery.")
+                task_chain = (
+                    data_pipeline.run_data_pipeline_task.s() |
+                    analysis.run_analysis_task.s()
+                )
+                task_chain.apply_async()
+            else:
+                logger.info("Existing market data found. Skipping initial data fetch.")
 
         except Exception as e:
-            logger.error(f"Failed during initial data setup: {e}", exc_info=True)
-            # Log and continue; Celery Beat will run the tasks later.
+            logger.error(f"Failed during initial data check: {e}", exc_info=True)
 
-    await initial_setup()
+    # Run the check, but don't block the main startup flow for too long.
+    # The check itself is quick because of the threadpool.
+    await trigger_initial_setup_if_needed()
 
-    logger.info("Celery services will handle background tasks. No in-app scheduler started.")
+    logger.info("Celery services will handle all background tasks. No in-app scheduler started.")
     yield
     # On shutdown
     logger.info("Application shutdown...")
