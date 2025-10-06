@@ -1,4 +1,3 @@
-import logging
 import os
 from fastapi import FastAPI, HTTPException, Query, Depends, Header
 from fastapi.concurrency import run_in_threadpool
@@ -7,6 +6,9 @@ from typing import List, Optional
 from datetime import datetime, timezone
 import asyncio
 from contextlib import asynccontextmanager
+
+# Centralized logging
+from logging_config import logger
 
 # Caching imports
 from fastapi_cache import FastAPICache
@@ -21,8 +23,6 @@ import esi_utils
 from database import get_db_connection
 from scheduler import start_scheduler, stop_scheduler
 
-# Use the Uvicorn logger
-logger = logging.getLogger("uvicorn.error")
 
 # --- Security ---
 API_KEY = os.getenv("API_KEY")
@@ -94,8 +94,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-
-# Placeholder data removed, will be loaded from SDE
 
 # --- API Endpoints ---
 @app.get("/api/top-items", response_model=List[ItemAnalysis])
@@ -237,5 +235,6 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level=log_level)
+    # The centralized logger is already configured, so we just run the server.
+    # The log level is handled by the logging_config module.
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

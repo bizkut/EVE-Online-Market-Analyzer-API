@@ -6,6 +6,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
 from datetime import datetime
+from logging_config import logger
 
 def get_item_history(type_id: int, region_id: int, days: int = 90) -> pd.DataFrame:
     """Retrieves market history for a specific item in a region for the last N days."""
@@ -67,6 +68,7 @@ def predict_next_day_prices(type_id: int, region_id: int):
     history_df = get_item_history(type_id, region_id)
 
     if history_df.empty or len(history_df) < 30:
+        logger.debug(f"Not enough historical data to generate prediction for type_id {type_id}.")
         return {
             "predicted_buy_price": None,
             "predicted_sell_price": None,
@@ -76,6 +78,7 @@ def predict_next_day_prices(type_id: int, region_id: int):
     features_df = create_features(history_df)
 
     if features_df.empty:
+        logger.debug(f"Could not create features for prediction for type_id {type_id}.")
         return {
             "predicted_buy_price": None,
             "predicted_sell_price": None,
@@ -120,12 +123,12 @@ if __name__ == '__main__':
     TYPE_ID_TO_TEST = 34
     REGION_ID_TO_TEST = 10000001
 
-    print(f"Predicting prices for type_id={TYPE_ID_TO_TEST} in region={REGION_ID_TO_TEST}...")
+    logger.info(f"Predicting prices for type_id={TYPE_ID_TO_TEST} in region={REGION_ID_TO_TEST}...")
     prediction_result = predict_next_day_prices(TYPE_ID_TO_TEST, REGION_ID_TO_TEST)
 
     if prediction_result["predicted_buy_price"] is not None:
-        print(f"  Predicted Buy Price: {prediction_result['predicted_buy_price']}")
-        print(f"  Predicted Sell Price: {prediction_result['predicted_sell_price']}")
-        print(f"  Confidence (R^2 Score): {prediction_result['confidence_score']}")
+        logger.info(f"  Predicted Buy Price: {prediction_result['predicted_buy_price']}")
+        logger.info(f"  Predicted Sell Price: {prediction_result['predicted_sell_price']}")
+        logger.info(f"  Confidence (R^2 Score): {prediction_result['confidence_score']}")
     else:
-        print("  Could not generate a prediction. Not enough historical data.")
+        logger.warning("  Could not generate a prediction. Not enough historical data.")

@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2 import sql
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
+from logging_config import logger
 
 load_dotenv()
 
@@ -18,7 +19,6 @@ def get_db_connection():
 
 def initialize_database():
     """Initializes the database by creating necessary tables if they don't exist."""
-    # This function can continue to use a raw connection for setup.
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -85,7 +85,7 @@ def initialize_database():
     conn.commit()
     cur.close()
     conn.close()
-    print("Database initialized successfully.")
+    logger.info("Database initialized successfully.")
 
 if __name__ == "__main__":
     initialize_database()

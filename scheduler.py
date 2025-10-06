@@ -1,6 +1,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from data_pipeline import main as run_data_pipeline
 import asyncio
+from logging_config import logger
 
 scheduler = AsyncIOScheduler()
 
@@ -13,11 +14,11 @@ def start_scheduler():
 
     # Start the scheduler
     scheduler.start()
-    print("Scheduler started. Data will be refreshed hourly.")
+    logger.info("Scheduler started. Data will be refreshed hourly.")
 
 def stop_scheduler():
     """
     Stops the APScheduler.
     """
     scheduler.shutdown()
-    print("Scheduler stopped.")
+    logger.info("Scheduler stopped.")

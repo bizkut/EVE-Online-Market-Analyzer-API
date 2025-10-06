@@ -1,8 +1,9 @@
 import pandas as pd
 from sqlalchemy import text
-from database import engine  # Import the shared engine
+from database import engine
 import numpy as np
 from datetime import datetime
+from logging_config import logger
 
 # --- Constants ---
 # NOTE: These are assumed percentages. The prompt is ambiguous.
@@ -122,11 +123,11 @@ def analyze_market_data(region_id: int):
 
 if __name__ == '__main__':
     DEFAULT_REGION = 10000001
-    print(f"Running analysis for region {DEFAULT_REGION}...")
+    logger.info(f"Running analysis for region {DEFAULT_REGION}...")
     results = analyze_market_data(DEFAULT_REGION)
 
     if not results.empty:
-        print("Top 10 most profitable items:")
-        print(results.head(10))
+        logger.info("Top 10 most profitable items:")
+        logger.info(f"\n{results.head(10).to_string()}")
     else:
-        print("No profitable items found.")
+        logger.info("No profitable items found.")
