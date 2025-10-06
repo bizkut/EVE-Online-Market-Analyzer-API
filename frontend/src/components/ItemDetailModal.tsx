@@ -5,9 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 import { getItemDetails } from '@/lib/api';
 import { useModalStore } from '@/stores/modalStore';
 import { Dialog, Transition } from '@headlessui/react';
-import { X } from 'lucide-react';
+import { X, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import TrendChart from './TrendChart';
 import VolumeChart from './VolumeChart';
+import ProfitEvolutionChart from './ProfitEvolutionChart';
+import { ModalSkeleton } from './SkeletonLoader';
+
+const formatCurrency = (num: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'ISK' }).format(num);
 
 const ItemDetailModal = () => {
   const { isOpen, closeModal, selectedItemId } = useModalStore();
@@ -16,6 +20,13 @@ const ItemDetailModal = () => {
     queryFn: () => getItemDetails(selectedItemId!),
     enabled: !!selectedItemId,
   });
+
+  const TrendIcon = () => {
+    if (!item) return null;
+    if (item.trend_direction === 'up') return <ArrowUp className="text-profit-positive" />;
+    if (item.trend_direction === 'down') return <ArrowDown className="text-profit-negative" />;
+    return <Minus className="text-gray-500" />;
+  };
 
   return (
     <Transition appear show={isOpen} as={React.Fragment}>
@@ -43,21 +54,42 @@ const ItemDetailModal = () => {
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-panel p-6 text-left align-middle shadow-xl transition-all border border-gray-700">
+              <Dialog.Panel className="w-full max-w-6xl transform overflow-hidden rounded-2xl bg-panel p-6 text-left align-middle shadow-xl transition-all border border-gray-700">
                 <Dialog.Title as="h3" className="text-xl font-bold leading-6 text-white flex justify-between items-center font-orbitron">
-                  {item?.name || 'Loading...'}
+                  <div className="flex items-center gap-4">
+                    {item && !isLoading ? <img src={item.thumbnail_url} alt={item.name} className="h-12 w-12 rounded-md" /> : <div className="h-12 w-12 rounded-md bg-gray-700 animate-pulse" />}
+                    <span>{item?.name || 'Loading...'}</span>
+                  </div>
                   <button onClick={closeModal} className="p-1 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors">
                     <X className="h-6 w-6" />
                   </button>
                 </Dialog.Title>
 
                 <div className="mt-4">
-                  {isLoading && <p className="text-center p-8">Loading item details...</p>}
-                  {error && <p className="text-center p-8 text-profit-negative">Error loading item details.</p>}
-                  {item && (
+                  {isLoading && <ModalSkeleton />}
+                  {error && <div className="h-96 flex items-center justify-center"><p className="text-profit-negative">Error loading item details.</p></div>}
+                  {!isLoading && item && (
                     <div className="space-y-6">
-                      <p className="text-sm text-neutral-text">{item.description}</p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                        <div className="bg-background/50 p-3 rounded-lg">
+                          <p className="text-sm text-gray-400">Predicted Buy</p>
+                          <p className="text-lg font-bold text-white">{formatCurrency(item.predicted_buy_price)}</p>
+                        </div>
+                        <div className="bg-background/50 p-3 rounded-lg">
+                          <p className="text-sm text-gray-400">Predicted Sell</p>
+                          <p className="text-lg font-bold text-white">{formatCurrency(item.predicted_sell_price)}</p>
+                        </div>
+                        <div className="bg-background/50 p-3 rounded-lg">
+                          <p className="text-sm text-gray-400">Volatility</p>
+                          <p className="text-lg font-bold text-white">{(item.volatility * 100).toFixed(2)}%</p>
+                        </div>
+                        <div className="bg-background/50 p-3 rounded-lg flex flex-col justify-center items-center">
+                          <p className="text-sm text-gray-400">Trend</p>
+                          <TrendIcon />
+                        </div>
+                      </div>
+                      <p className="text-sm text-neutral-text italic">{item.description}</p>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div className="bg-background/50 p-4 rounded-lg">
                           <h4 className="font-bold text-white mb-2">Price History</h4>
                           <TrendChart data={item.price_history} />
@@ -65,6 +97,10 @@ const ItemDetailModal = () => {
                         <div className="bg-background/50 p-4 rounded-lg">
                           <h4 className="font-bold text-white mb-2">Volume History</h4>
                           <VolumeChart data={item.volume_history} />
+                        </div>
+                         <div className="bg-background/50 p-4 rounded-lg lg:col-span-2">
+                          <h4 className="font-bold text-white mb-2">Profit & ROI History</h4>
+                           <ProfitEvolutionChart data={item.profit_history} />
                         </div>
                       </div>
                     </div>

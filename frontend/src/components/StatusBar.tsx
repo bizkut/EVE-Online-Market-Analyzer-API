@@ -3,7 +3,7 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStatus } from '@/lib/api';
-import { Wifi, WifiOff, Clock } from 'lucide-react';
+import { Wifi, WifiOff, Clock, Server } from 'lucide-react';
 
 const StatusBar = () => {
   const { data: status, error } = useQuery({
@@ -15,7 +15,7 @@ const StatusBar = () => {
   const isOnline = status && !error;
 
   return (
-    <footer className="bg-[#161b22] p-4 text-center text-sm border-t border-gray-700 text-gray-400">
+    <footer className="bg-panel p-4 text-center text-sm border-t border-gray-700/50 text-gray-400">
       <div className="flex justify-center items-center space-x-4">
         <div className={`flex items-center space-x-1 ${isOnline ? 'text-green-400' : 'text-red-400'}`}>
           {isOnline ? <Wifi size={16} /> : <WifiOff size={16} />}
@@ -29,6 +29,11 @@ const StatusBar = () => {
             </div>
             <span>|</span>
             <span>Items Analyzed: {status.total_items_analyzed}</span>
+            <span>|</span>
+            <div className="flex items-center space-x-1">
+              <Server size={16} />
+              <span>Uptime: {status.system_uptime}</span>
+            </div>
           </>
         )}
       </div>

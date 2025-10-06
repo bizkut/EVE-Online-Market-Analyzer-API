@@ -14,6 +14,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { ArrowUpDown, ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { TableSkeleton } from './SkeletonLoader';
 
 const formatNumber = (num: number) => new Intl.NumberFormat('en-US').format(num);
 const formatCurrency = (num: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'ISK' }).format(num);
@@ -26,47 +27,52 @@ const columns: ColumnDef<Item>[] = [
     },
     {
         accessorKey: 'avg_buy_price',
-        header: ({ column }) => {
-            return (
-                <button
-                    className="flex items-center space-x-2"
-                    onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-                >
-                    <span>Buy Price</span>
-                    <ArrowUpDown className="h-4 w-4" />
-                </button>
-            )
-        },
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>Buy Price</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
         cell: ({ row }) => formatCurrency(row.original.avg_buy_price),
     },
     {
         accessorKey: 'avg_sell_price',
-        header: ({ column }) => {
-            return (
-                <button
-                    className="flex items-center space-x-2"
-                    onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-                >
-                    <span>Sell Price</span>
-                    <ArrowUpDown className="h-4 w-4" />
-                </button>
-            )
-        },
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>Sell Price</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
         cell: ({ row }) => formatCurrency(row.original.avg_sell_price),
     },
     {
+        accessorKey: 'predicted_buy_price',
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>Predicted Buy</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
+        cell: ({ row }) => formatCurrency(row.original.predicted_buy_price),
+    },
+    {
+        accessorKey: 'predicted_sell_price',
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>Predicted Sell</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
+        cell: ({ row }) => formatCurrency(row.original.predicted_sell_price),
+    },
+    {
         accessorKey: 'profit_per_unit',
-        header: ({ column }) => {
-            return (
-                <button
-                    className="flex items-center space-x-2"
-                    onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-                >
-                    <span>Profit</span>
-                    <ArrowUpDown className="h-4 w-4" />
-                </button>
-            )
-        },
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>Profit</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
         cell: ({ row }) => {
             const profit = row.original.profit_per_unit;
             const color = profit > 0 ? 'text-profit-positive' : profit < 0 ? 'text-profit-negative' : '';
@@ -75,17 +81,12 @@ const columns: ColumnDef<Item>[] = [
     },
     {
         accessorKey: 'roi_percent',
-        header: ({ column }) => {
-            return (
-                <button
-                    className="flex items-center space-x-2"
-                    onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-                >
-                    <span>ROI</span>
-                    <ArrowUpDown className="h-4 w-4" />
-                </button>
-            )
-        },
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>ROI</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
         cell: ({ row }) => {
             const roi = row.original.roi_percent;
             const color = roi > 0 ? 'text-profit-positive' : roi < 0 ? 'text-profit-negative' : '';
@@ -94,18 +95,23 @@ const columns: ColumnDef<Item>[] = [
     },
     {
         accessorKey: 'volume_30d_avg',
-        header: ({ column }) => {
-            return (
-                <button
-                    className="flex items-center space-x-2"
-                    onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
-                >
-                    <span>Volume</span>
-                    <ArrowUpDown className="h-4 w-4" />
-                </button>
-            )
-        },
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>Volume</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
         cell: ({ row }) => formatNumber(row.original.volume_30d_avg),
+    },
+    {
+        accessorKey: 'volatility',
+        header: ({ column }) => (
+            <button className="flex items-center space-x-2" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}>
+                <span>Volatility</span>
+                <ArrowUpDown className="h-4 w-4" />
+            </button>
+        ),
+        cell: ({ row }) => formatPercent(row.original.volatility),
     },
     {
         accessorKey: 'trend_direction',
@@ -116,6 +122,11 @@ const columns: ColumnDef<Item>[] = [
             if (trend === 'down') return <ArrowDown className="text-profit-negative" />;
             return <Minus className="text-gray-500" />;
         },
+    },
+    {
+        accessorKey: 'last_updated',
+        header: 'Last Updated',
+        cell: ({ row }) => new Date(row.original.last_updated).toLocaleString(),
     },
 ];
 
@@ -145,7 +156,7 @@ const TopItemsTable = () => {
         },
     });
 
-    if (isLoading) return <p>Loading...</p>;
+    if (isLoading) return <TableSkeleton />;
     if (error) return <p>Error loading data</p>;
 
     return (
