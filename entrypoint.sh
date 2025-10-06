@@ -15,9 +15,9 @@ done
 echo "Initializing database schema..."
 python database.py
 
-# Run the data pipeline to populate the database with initial data
-echo "Running initial data pipeline..."
-python data_pipeline.py
+# Run the initial data loader to populate the database if it's empty
+echo "Running initial data loader..."
+python initial_data_loader.py
 
 # Set default log level if not provided and convert to lowercase
 LOG_LEVEL=$(echo "${LOG_LEVEL:-info}" | tr '[:upper:]' '[:lower:]')
