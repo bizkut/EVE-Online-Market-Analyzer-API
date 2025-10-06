@@ -93,20 +93,42 @@ async def lifespan(app: FastAPI):
     redis = aioredis.from_url(redis_url)
     FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
 
-    # Check if analysis data exists. If not, run it immediately in the background.
-    try:
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            # Use EXISTS for a potentially more efficient check
-            cur.execute("SELECT EXISTS (SELECT 1 FROM market_analysis);")
-            analysis_exists = cur.fetchone()[0]
-            cur.close()
+    # --- Initial Data Population and Analysis ---
+    # This runs once on startup to ensure the database is populated before the scheduler starts.
+    async def initial_setup():
+        logger.info("Performing initial data and analysis check...")
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT EXISTS (SELECT 1 FROM market_history);")
+                history_exists = cur.fetchone()[0]
 
-        if not analysis_exists:
-            logger.info("No market analysis data found. Triggering initial analysis run in the background.")
-            asyncio.create_task(analysis.run_and_store_analysis_for_all_regions())
-    except Exception as e:
-        logger.error(f"Failed to perform initial analysis check: {e}", exc_info=True)
+                if not history_exists:
+                    cur.close() # Close cursor before long-running task
+                    logger.info("No market history data found. Triggering initial data pipeline run...")
+                    await data_pipeline.main()
+                    logger.info("Initial data pipeline run complete.")
+                    # After pipeline, analysis is required.
+                    logger.info("Triggering initial analysis run...")
+                    await analysis.run_and_store_analysis_for_all_regions()
+                    logger.info("Initial analysis run complete.")
+                else:
+                    cur.execute("SELECT EXISTS (SELECT 1 FROM market_analysis);")
+                    analysis_exists = cur.fetchone()[0]
+                    cur.close()
+                    if not analysis_exists:
+                        logger.info("Market data found, but no analysis. Triggering initial analysis run...")
+                        await analysis.run_and_store_analysis_for_all_regions()
+                        logger.info("Initial analysis run complete.")
+                    else:
+                        logger.info("Existing data and analysis found. Skipping initial run.")
+
+        except Exception as e:
+            logger.error(f"Failed during initial data setup: {e}", exc_info=True)
+            # For now, we log and continue, the scheduler might fix it later.
+
+    # Run setup before starting the scheduler
+    await initial_setup()
 
     start_scheduler()
     yield
