@@ -87,7 +87,11 @@ def calculate_history_metrics(history_df_30d: pd.DataFrame, history_df_180d: pd.
     trends = history_groups_180d.apply(get_trend, include_groups=False).to_frame('trend_direction').reset_index()
 
     def get_correlation(df):
-        if len(df['average']) < 2 or len(df['volume']) < 2: return 0.0
+        if len(df['average']) < 2 or len(df['volume']) < 2:
+            return 0.0
+        # If standard deviation is zero, correlation is not meaningful and causes a runtime warning.
+        if df['average'].std() == 0 or df['volume'].std() == 0:
+            return 0.0
         return df['average'].corr(df['volume'])
 
     correlations = history_groups_180d.apply(get_correlation, include_groups=False).to_frame('price_volume_correlation').reset_index()
