@@ -73,10 +73,20 @@ def initialize_database():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS item_names (
             type_id INT PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            description TEXT
+            name VARCHAR(255) NOT NULL
         );
     """)
+
+    # --- Simple Schema Migration ---
+    # Add description column to item_names if it doesn't exist
+    cur.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name='item_names' AND column_name='description'
+    """)
+    if cur.fetchone() is None:
+        cur.execute("ALTER TABLE item_names ADD COLUMN description TEXT;")
+        logger.info("Added missing 'description' column to 'item_names' table.")
 
     # Create an index on type_id and region_id for faster lookups
     cur.execute("CREATE INDEX IF NOT EXISTS idx_market_orders_type_region ON market_orders (type_id, region_id);")
