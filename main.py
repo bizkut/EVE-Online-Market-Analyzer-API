@@ -41,6 +41,8 @@ class ItemAnalysis(BaseModel):
     type_id: int
     region_id: int
     item_name: str
+    description: Optional[str]
+    image_url: str
     avg_buy_price: Optional[float]
     avg_sell_price: Optional[float]
     predicted_buy_price: Optional[float]
@@ -132,11 +134,13 @@ async def get_top_items(
 
         # Helper to build response items concurrently
         async def create_response_item(item, prediction_result):
-            item_name = await esi_utils.get_item_name(item['type_id'])
+            item_details = await esi_utils.get_item_details(item['type_id'])
             return ItemAnalysis(
                 type_id=item['type_id'],
                 region_id=region,
-                item_name=item_name,
+                item_name=item_details['name'],
+                description=item_details['description'],
+                image_url=f"https://images.evetech.net/types/{item['type_id']}/icon?size=64",
                 avg_buy_price=item.get('avg_buy_price'),
                 avg_sell_price=item.get('avg_sell_price'),
                 predicted_buy_price=prediction_result.get('predicted_buy_price'),
@@ -167,15 +171,17 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
 
     item = item_data.iloc[0].to_dict()
 
-    # Concurrently fetch prediction and item name
+    # Concurrently fetch prediction and item details
     prediction_task = run_in_threadpool(predict.predict_next_day_prices, type_id, region_id)
-    item_name_task = esi_utils.get_item_name(type_id)
-    prediction_result, item_name = await asyncio.gather(prediction_task, item_name_task)
+    item_details_task = esi_utils.get_item_details(type_id)
+    prediction_result, item_details = await asyncio.gather(prediction_task, item_details_task)
 
     analysis_data = ItemAnalysis(
         type_id=type_id,
         region_id=region_id,
-        item_name=item_name,
+        item_name=item_details['name'],
+        description=item_details['description'],
+        image_url=f"https://images.evetech.net/types/{type_id}/icon?size=64",
         avg_buy_price=item.get('avg_buy_price'),
         avg_sell_price=item.get('avg_sell_price'),
         predicted_buy_price=prediction_result.get('predicted_buy_price'),
@@ -192,7 +198,7 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
     return ItemDetail(
         type_id=type_id,
         region_id=region_id,
-        item_name=item_name,
+        item_name=item_details['name'],
         analysis=analysis_data,
         prediction_confidence=prediction_result.get('confidence_score')
     )

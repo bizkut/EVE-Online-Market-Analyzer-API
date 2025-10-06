@@ -73,7 +73,8 @@ def initialize_database():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS item_names (
             type_id INT PRIMARY KEY,
-            name VARCHAR(255) NOT NULL
+            name VARCHAR(255) NOT NULL,
+            description TEXT
         );
     """)
 

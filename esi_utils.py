@@ -7,7 +7,7 @@ from logging_config import logger
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 
 # In-memory cache, loaded from the database on startup
-ITEM_NAMES_CACHE = {}
+ITEM_DETAILS_CACHE = {}  # Will store {'name': str, 'description': str}
 REGION_NAMES_CACHE = {}
 ALL_REGIONS_CACHE = None
 
@@ -24,41 +24,48 @@ async def fetch_esi(session, url):
         logger.error(f"Error fetching from ESI: {e}", exc_info=True)
         return None
 
-async def get_item_name(type_id: int) -> str:
-    """Fetches an item's name, using a multi-level cache (memory -> DB -> ESI)."""
+async def get_item_details(type_id: int) -> dict:
+    """Fetches an item's details (name, desc), using a multi-level cache."""
+    default_details = {"name": f"Unknown Item ({type_id})", "description": ""}
+
     # 1. Check in-memory cache
-    if type_id in ITEM_NAMES_CACHE:
-        return ITEM_NAMES_CACHE[type_id]
+    if type_id in ITEM_DETAILS_CACHE:
+        return ITEM_DETAILS_CACHE[type_id]
 
     # 2. Check database cache
     try:
         with engine.connect() as conn:
-            result = conn.execute(text("SELECT name FROM item_names WHERE type_id = :type_id"), {"type_id": type_id}).first()
+            result = conn.execute(text("SELECT name, description FROM item_names WHERE type_id = :type_id"), {"type_id": type_id}).first()
             if result:
-                name = result[0]
-                ITEM_NAMES_CACHE[type_id] = name  # Populate in-memory cache
-                return name
+                details = {"name": result[0], "description": result[1]}
+                ITEM_DETAILS_CACHE[type_id] = details
+                return details
     except Exception as e:
-        logger.error(f"Database error while fetching item name for type_id {type_id}: {e}", exc_info=True)
-
+        logger.error(f"Database error while fetching item details for type_id {type_id}: {e}", exc_info=True)
 
     # 3. Fetch from ESI
     async with aiohttp.ClientSession() as session:
         url = f"{ESI_BASE_URL}/universe/types/{type_id}/"
         data = await fetch_esi(session, url)
-        if data and 'name' in data:
-            name = data['name']
-            ITEM_NAMES_CACHE[type_id] = name  # Populate in-memory cache
+        if data:
+            name = data.get('name', f"Unknown Item ({type_id})")
+            description = data.get('description', '')
+            details = {"name": name, "description": description}
+            ITEM_DETAILS_CACHE[type_id] = details
+
             # Save to database cache
             try:
                 with engine.connect() as conn:
-                    conn.execute(text("INSERT INTO item_names (type_id, name) VALUES (:type_id, :name) ON CONFLICT (type_id) DO NOTHING"), {"type_id": type_id, "name": name})
+                    conn.execute(
+                        text("INSERT INTO item_names (type_id, name, description) VALUES (:type_id, :name, :description) ON CONFLICT (type_id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description"),
+                        {"type_id": type_id, "name": name, "description": description}
+                    )
                     conn.commit()
             except Exception as e:
-                 logger.error(f"Database error while saving item name for type_id {type_id}: {e}", exc_info=True)
-            return name
+                 logger.error(f"Database error while saving item details for type_id {type_id}: {e}", exc_info=True)
+            return details
 
-    return f"Unknown Item ({type_id})"
+    return default_details
 
 async def get_region_name(region_id: int) -> str:
     """Fetches a region's name, using a multi-level cache (memory -> DB -> ESI)."""
@@ -118,16 +125,16 @@ def pre_populate_caches_from_db():
     logger.info("Pre-populating ESI caches from database...")
     try:
         with engine.connect() as conn:
-            # Load item names
-            items = conn.execute(text("SELECT type_id, name FROM item_names")).fetchall()
-            for type_id, name in items:
-                ITEM_NAMES_CACHE[type_id] = name
+            # Load item details
+            items = conn.execute(text("SELECT type_id, name, description FROM item_names")).fetchall()
+            for type_id, name, description in items:
+                ITEM_DETAILS_CACHE[type_id] = {"name": name, "description": description}
 
             # Load region names
             regions = conn.execute(text("SELECT region_id, name FROM regions")).fetchall()
             for region_id, name in regions:
                 REGION_NAMES_CACHE[region_id] = name
 
-        logger.info(f"Pre-populated {len(ITEM_NAMES_CACHE)} item names and {len(REGION_NAMES_CACHE)} region names from DB.")
+        logger.info(f"Pre-populated {len(ITEM_DETAILS_CACHE)} item details and {len(REGION_NAMES_CACHE)} region names from DB.")
     except Exception as e:
         logger.error(f"Failed to pre-populate caches from DB: {e}", exc_info=True)
