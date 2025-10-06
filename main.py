@@ -93,6 +93,21 @@ async def lifespan(app: FastAPI):
     redis = aioredis.from_url(redis_url)
     FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
 
+    # Check if analysis data exists. If not, run it immediately in the background.
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            # Use EXISTS for a potentially more efficient check
+            cur.execute("SELECT EXISTS (SELECT 1 FROM market_analysis);")
+            analysis_exists = cur.fetchone()[0]
+            cur.close()
+
+        if not analysis_exists:
+            logger.info("No market analysis data found. Triggering initial analysis run in the background.")
+            asyncio.create_task(analysis.run_and_store_analysis_for_all_regions())
+    except Exception as e:
+        logger.error(f"Failed to perform initial analysis check: {e}", exc_info=True)
+
     start_scheduler()
     yield
     # On shutdown
