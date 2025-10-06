@@ -1,10 +1,12 @@
 import pandas as pd
 from sqlalchemy import text
-from database import engine
+from database import engine, get_db_connection
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import logging_config  # Ensure logging is configured
+from psycopg2.extras import execute_values
+import esi_utils # To get active regions
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -138,13 +140,79 @@ def analyze_market_data(region_id: int):
     logger.info(f"Completed hybrid analysis for region {region_id}, found {len(profitable_items)} profitable items.")
     return profitable_items.replace({np.nan: None})
 
-if __name__ == '__main__':
-    DEFAULT_REGION = 10000001
-    logger.info(f"Running hybrid analysis for region {DEFAULT_REGION}...")
-    results = analyze_market_data(DEFAULT_REGION)
+def upsert_analysis_data(df: pd.DataFrame, region_id: int):
+    """
+    Upserts the analysis data into the market_analysis table.
+    """
+    if df.empty:
+        logger.info(f"No analysis data to store for region {region_id}.")
+        return
 
-    if not results.empty:
-        logger.info("Top 10 most profitable items based on hybrid analysis:")
-        logger.info(f"\n{results.head(10).to_string()}")
-    else:
-        logger.info("No profitable items found based on hybrid analysis.")
+    df['region_id'] = region_id
+    df['last_updated'] = datetime.now(timezone.utc)
+
+    # Ensure all required columns are present
+    required_cols = [
+        'type_id', 'region_id', 'avg_buy_price', 'avg_sell_price', 'profit_per_unit',
+        'roi_percent', 'avg_daily_volume', 'volatility_30d', 'trend_direction',
+        'price_volume_correlation', 'profit_score', 'last_updated'
+    ]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = np.nan # Add missing columns with NaN
+
+    # Reorder and select columns for insertion
+    df = df[required_cols]
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Using ON CONFLICT to perform an upsert
+            # Note: The order of columns in the INSERT statement must match the order in `data_to_insert`.
+            upsert_sql = """
+                INSERT INTO market_analysis (
+                    type_id, region_id, avg_buy_price, avg_sell_price, profit_per_unit,
+                    roi_percent, avg_daily_volume, volatility_30d, trend_direction,
+                    price_volume_correlation, profit_score, last_updated
+                )
+                VALUES %s
+                ON CONFLICT (type_id, region_id) DO UPDATE SET
+                    avg_buy_price = EXCLUDED.avg_buy_price,
+                    avg_sell_price = EXCLUDED.avg_sell_price,
+                    profit_per_unit = EXCLUDED.profit_per_unit,
+                    roi_percent = EXCLUDED.roi_percent,
+                    avg_daily_volume = EXCLUDED.avg_daily_volume,
+                    volatility_30d = EXCLUDED.volatility_30d,
+                    trend_direction = EXCLUDED.trend_direction,
+                    price_volume_correlation = EXCLUDED.price_volume_correlation,
+                    profit_score = EXCLUDED.profit_score,
+                    last_updated = EXCLUDED.last_updated;
+            """
+            data_to_insert = [tuple(row) for row in df.to_numpy()]
+            execute_values(cur, upsert_sql, data_to_insert)
+            conn.commit()
+    logger.info(f"Successfully upserted {len(df)} rows of analysis data for region {region_id}.")
+
+async def run_and_store_analysis_for_all_regions():
+    """
+    Runs market analysis for all active regions and stores the results in the database.
+    """
+    logger.info("Starting market analysis for all active regions...")
+    regions = await esi_utils.get_all_regions()
+    active_regions = [region['region_id'] for region in regions if 10000000 < region['region_id'] < 11000000] # Filter for standard regions
+
+    for region_id in active_regions:
+        try:
+            analysis_df = analyze_market_data(region_id)
+            if not analysis_df.empty:
+                upsert_analysis_data(analysis_df, region_id)
+        except Exception as e:
+            logger.error(f"Error analyzing region {region_id}: {e}", exc_info=True)
+
+    logger.info("Completed market analysis for all active regions.")
+
+if __name__ == '__main__':
+    import asyncio
+    logger.info("Running standalone market analysis for all regions...")
+    # To run the async function from a synchronous main block
+    asyncio.run(run_and_store_analysis_for_all_regions())
+    logger.info("Standalone market analysis finished.")

@@ -100,9 +100,29 @@ def initialize_database():
         cur.execute("ALTER TABLE item_names ADD COLUMN description TEXT;")
         logger.info("Added missing 'description' column to 'item_names' table.")
 
+    # Create market_analysis table for pre-computed results
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS market_analysis (
+            type_id INT,
+            region_id INT,
+            avg_buy_price NUMERIC,
+            avg_sell_price NUMERIC,
+            profit_per_unit NUMERIC,
+            roi_percent NUMERIC,
+            avg_daily_volume NUMERIC,
+            volatility_30d NUMERIC,
+            trend_direction INT,
+            price_volume_correlation NUMERIC,
+            profit_score NUMERIC,
+            last_updated TIMESTAMP WITH TIME ZONE,
+            PRIMARY KEY (type_id, region_id)
+        );
+    """)
+
     # Create an index on type_id and region_id for faster lookups
     cur.execute("CREATE INDEX IF NOT EXISTS idx_market_orders_type_region ON market_orders (type_id, region_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_market_history_type_region ON market_history (type_id, region_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_market_analysis_score ON market_analysis (profit_score DESC);")
 
 
     conn.commit()

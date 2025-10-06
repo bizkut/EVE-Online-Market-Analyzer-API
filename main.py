@@ -8,6 +8,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import logging_config  # Ensure logging is configured
+import pandas as pd
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ import analysis
 import predict
 import data_pipeline
 import esi_utils
-from database import get_db_connection
+from database import get_db_connection, engine
 from scheduler import start_scheduler, stop_scheduler
 
 
@@ -55,7 +56,7 @@ class ItemAnalysis(BaseModel):
     volatility_30d: Optional[float]
     trend_direction: Optional[int]
     price_volume_correlation: Optional[float]
-    last_updated: datetime
+    last_updated: Optional[datetime]
 
 class ItemDetail(BaseModel):
     type_id: int
@@ -74,6 +75,7 @@ class SystemStatus(BaseModel):
     status: str
     latest_market_order_update: Optional[datetime]
     latest_market_history_update: Optional[datetime]
+    latest_analysis_update: Optional[datetime]
 
 class Region(BaseModel):
     region_id: int
@@ -107,7 +109,7 @@ app = FastAPI(
 
 # --- API Endpoints ---
 @app.get("/api/top-items", response_model=List[ItemAnalysis])
-@cache(expire=3600)  # Cache for 1 hour
+@cache(expire=600)  # Cache for 10 minutes
 async def get_top_items(
     limit: int = Query(100, ge=1, le=1000),
     region: int = Query(10000001, description="EVE Online region ID."),
@@ -115,18 +117,29 @@ async def get_top_items(
     min_roi: Optional[float] = Query(None, description="Minimum Return on Investment (ROI) in percent.")
 ):
     try:
-        results_df = await run_in_threadpool(analysis.analyze_market_data, region)
-
-        # Apply filters
+        # Build the query to fetch pre-computed analysis data
+        params = {"region": region, "limit": limit}
+        query_parts = [
+            "SELECT * FROM market_analysis",
+            "WHERE region_id = %(region)s"
+        ]
         if min_volume is not None:
-            results_df = results_df[results_df['avg_daily_volume'] >= min_volume]
+            query_parts.append("AND avg_daily_volume >= %(min_volume)s")
+            params["min_volume"] = min_volume
         if min_roi is not None:
-            results_df = results_df[results_df['roi_percent'] >= min_roi]
+            query_parts.append("AND roi_percent >= %(min_roi)s")
+            params["min_roi"] = min_roi
+
+        query_parts.append("ORDER BY profit_score DESC LIMIT %(limit)s")
+        query = " ".join(query_parts)
+
+        # Fetch data from the database
+        results_df = await run_in_threadpool(pd.read_sql, query, engine, params=params)
 
         if results_df.empty:
             return []
 
-        top_items = results_df.head(limit).to_dict(orient='records')
+        top_items = results_df.to_dict(orient='records')
 
         # Fetch predictions concurrently
         prediction_tasks = [
@@ -153,7 +166,7 @@ async def get_top_items(
                 volatility_30d=item.get('volatility_30d'),
                 trend_direction=item.get('trend_direction'),
                 price_volume_correlation=item.get('price_volume_correlation'),
-                last_updated=datetime.now(timezone.utc)
+                last_updated=item.get('last_updated')
             )
 
         response_tasks = [create_response_item(top_items[i], predictions[i]) for i in range(len(top_items))]
@@ -163,17 +176,19 @@ async def get_top_items(
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/api/item/{type_id}", response_model=ItemDetail)
-@cache(expire=3600)  # Cache for 1 hour
+@cache(expire=600)  # Cache for 10 minutes
 async def get_item_details(type_id: int, region_id: int = Query(10000001)):
-    results_df = await run_in_threadpool(analysis.analyze_market_data, region_id)
-    item_data = results_df[results_df['type_id'] == type_id]
+    # Fetch pre-computed analysis data for a specific item
+    query = "SELECT * FROM market_analysis WHERE type_id = %(type_id)s AND region_id = %(region_id)s"
+    params = {"type_id": type_id, "region_id": region_id}
+    item_df = await run_in_threadpool(pd.read_sql, query, engine, params=params)
 
-    if item_data.empty:
-        raise HTTPException(status_code=404, detail="Item not found or no profitable trades available.")
+    if item_df.empty:
+        raise HTTPException(status_code=404, detail="Item analysis data not found for the given type and region.")
 
-    item = item_data.iloc[0].to_dict()
+    item = item_df.iloc[0].to_dict()
 
-    # Concurrently fetch prediction and item details
+    # Concurrently fetch prediction and ESI item details
     prediction_task = run_in_threadpool(predict.predict_next_day_prices, type_id, region_id)
     item_details_task = esi_utils.get_item_details(type_id)
     prediction_result, item_details = await asyncio.gather(prediction_task, item_details_task)
@@ -194,7 +209,7 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
         volatility_30d=item.get('volatility_30d'),
         trend_direction=item.get('trend_direction'),
         price_volume_correlation=item.get('price_volume_correlation'),
-        last_updated=datetime.now(timezone.utc)
+        last_updated=item.get('last_updated')
     )
 
     return ItemDetail(
@@ -208,12 +223,18 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
 @app.post("/api/refresh", response_model=RefreshStatus, dependencies=[Depends(verify_api_key)])
 async def force_refresh():
     """
-    Triggers a manual refresh of the market datasets, protected by an API key.
+    Triggers a manual refresh of the market datasets and analysis, protected by an API key.
     """
     try:
-        # Run the pipeline in the background to avoid blocking the response
-        asyncio.create_task(data_pipeline.main())
-        return RefreshStatus(status="success", message="Data refresh initiated in the background.")
+        async def refresh_task():
+            logger.info("Manual refresh: Starting data pipeline...")
+            await run_in_threadpool(data_pipeline.main)
+            logger.info("Manual refresh: Data pipeline finished. Starting analysis...")
+            await analysis.run_and_store_analysis_for_all_regions()
+            logger.info("Manual refresh: Analysis finished.")
+
+        asyncio.create_task(refresh_task())
+        return RefreshStatus(status="success", message="Full data and analysis refresh initiated in the background.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start refresh: {e}")
 
@@ -226,15 +247,24 @@ def get_system_status():
             latest_order_update = cur.fetchone()[0]
             cur.execute("SELECT MAX(date) FROM market_history;")
             latest_history_update = cur.fetchone()[0]
+            cur.execute("SELECT MAX(last_updated) FROM market_analysis;")
+            latest_analysis_update = cur.fetchone()[0]
             cur.close()
 
         return SystemStatus(
             status="online",
             latest_market_order_update=latest_order_update,
-            latest_market_history_update=latest_history_update
+            latest_market_history_update=latest_history_update,
+            latest_analysis_update=latest_analysis_update
         )
     except Exception as e:
-        return SystemStatus(status="error", latest_market_order_update=None, latest_market_history_update=None)
+        logger.error(f"Error getting system status: {e}", exc_info=True)
+        return SystemStatus(
+            status="error",
+            latest_market_order_update=None,
+            latest_market_history_update=None,
+            latest_analysis_update=None
+        )
 
 @app.get("/api/regions", response_model=List[Region])
 async def get_regions():
