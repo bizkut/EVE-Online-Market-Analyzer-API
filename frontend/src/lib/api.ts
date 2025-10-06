@@ -26,6 +26,7 @@ export interface ItemDetail extends Item {
   thumbnail_url: string;
   price_history: { date: string; buy: number; sell: number }[];
   volume_history: { date: string; volume: number }[];
+  profit_history: { date: string; profit_per_unit: number; roi_percent: number }[];
 }
 
 export interface Status {
