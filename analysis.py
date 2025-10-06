@@ -3,7 +3,11 @@ from sqlalchemy import text
 from database import engine
 import numpy as np
 from datetime import datetime
-from logging_config import logger
+import logging
+import logging_config  # Ensure logging is configured
+
+# --- Setup Logger ---
+logger = logging.getLogger(__name__)
 
 # --- Constants ---
 BROKER_FEE = 0.01  # 1%

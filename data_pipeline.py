@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from sqlalchemy import text
 from database import engine
-from logging_config import logger
+import logging
+import logging_config  # Ensure logging is configured
+
+# --- Setup Logger ---
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 MARKET_ORDERS_URL = "https://data.everef.net/market-orders/market-orders-latest.v3.csv.bz2"

@@ -6,7 +6,11 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
 from datetime import datetime
-from logging_config import logger
+import logging
+import logging_config  # Ensure logging is configured
+
+# --- Setup Logger ---
+logger = logging.getLogger(__name__)
 
 def get_item_history(type_id: int, region_id: int, days: int = 90) -> pd.DataFrame:
     """Retrieves market history for a specific item in a region for the last N days."""

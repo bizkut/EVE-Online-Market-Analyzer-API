@@ -2,24 +2,43 @@ import logging
 import os
 import sys
 
+
 def setup_logging():
     """
-    Sets up a centralized logger for the application.
-    All modules should import the 'logger' from this module.
+    Configures the root logger for the application.
+
+    This function should be called once when the application starts. By importing
+    this module, the `setup_logging()` function is automatically executed.
+
+    It sets up a handler that logs to stdout, which is standard for
+    containerized applications. It respects the LOG_LEVEL environment variable.
     """
     log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
 
-    # Configure the root logger
-    # Using a stream handler to output to stdout/stderr, which is standard for containers.
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        stream=sys.stdout,
+    # Get the root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Remove any existing handlers to avoid duplicate logs or conflicts with
+    # other libraries that might also configure the root logger.
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+
+    # Add a new handler to stream to stdout
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
 
-# Set up the logger immediately when this module is imported
+    # For debugging purposes, log that the configuration is complete.
+    # We use the root logger directly here as this is the configuration module.
+    logging.info(f"Logging has been configured with level {log_level_str}.")
+
+
+# Set up the logger immediately when this module is imported.
+# Any module that needs logging should import this module at the top
+# to ensure the configuration is applied before any log messages are emitted.
 setup_logging()
-
-# Create a logger instance that other modules can import
-logger = logging.getLogger(__name__)
