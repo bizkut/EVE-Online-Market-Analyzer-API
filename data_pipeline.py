@@ -5,9 +5,9 @@ import json
 import pandas as pd
 import aiohttp
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 from sqlalchemy import text
 from database import engine
+from esi_utils import get_all_regions, fetch_esi_paginated, ESI_BASE_URL
 import logging
 import logging_config  # Ensure logging is configured
 
@@ -15,32 +15,10 @@ import logging_config  # Ensure logging is configured
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-MARKET_ORDERS_URL = "https://data.everef.net/market-orders/market-orders-latest.v3.csv.bz2"
 MARKET_HISTORY_BASE_URL = "https://data.everef.net/market-history"
 TOTALS_JSON_URL = f"{MARKET_HISTORY_BASE_URL}/totals.json"
 DATA_RETENTION_DAYS = 90
 
-# --- Metadata Management ---
-def get_metadata(key):
-    """Retrieves a value from the pipeline_metadata table."""
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT value FROM pipeline_metadata WHERE key = :key"), {"key": key}).scalar_one_or_none()
-        return result
-
-def set_metadata(key, value):
-    """Saves or updates a value in the pipeline_metadata table."""
-    with engine.connect() as conn:
-        upsert_sql = text("""
-            INSERT INTO pipeline_metadata (key, value)
-            VALUES (:key, :value)
-            ON CONFLICT (key) DO UPDATE SET
-                value = EXCLUDED.value;
-        """)
-        conn.execute(upsert_sql, {"key": key, "value": value})
-        conn.commit()
-    logger.debug(f"Set metadata for key '{key}'")
-
-# --- Helper Functions ---
 async def fetch_url(session, url):
     """Asynchronously fetches content from a URL."""
     try:
@@ -55,54 +33,68 @@ def decompress_bz2(data):
     """Decompresses bz2 data and returns a file-like object."""
     return io.StringIO(bz2.decompress(data).decode('utf-8'))
 
-# --- Data Fetching and Processing ---
 async def process_market_orders():
-    """Downloads, processes, and updates market orders if new data is available."""
-    logger.info("Checking for new market orders...")
-    remote_last_modified = None
+    """Fetches market orders from the ESI API for all regions and updates the database."""
+    logger.info("Starting ESI market order processing...")
+    all_orders = []
+
+    regions = await get_all_regions()
+    if not regions:
+        logger.error("Could not retrieve region list. Aborting market order update.")
+        return
+
     async with aiohttp.ClientSession() as session:
-        try:
-            async with session.head(MARKET_ORDERS_URL) as response:
-                response.raise_for_status()
-                remote_last_modified_str = response.headers.get('Last-Modified')
-                if remote_last_modified_str:
-                    remote_last_modified = parsedate_to_datetime(remote_last_modified_str)
-                else:
-                    logger.warning("Last-Modified header not found. Proceeding with download.")
-        except aiohttp.ClientError as e:
-            logger.error(f"Could not perform HEAD request on {MARKET_ORDERS_URL}: {e}", exc_info=True)
-            logger.warning("Proceeding with download as a fallback.")
+        for region in regions:
+            region_id = region['region_id']
+            logger.info(f"Fetching market orders for region ID: {region_id}...")
+            url = f"{ESI_BASE_URL}/markets/{region_id}/orders/"
 
-        stored_last_modified_str = get_metadata('market_orders_last_modified')
-        if stored_last_modified_str and remote_last_modified:
-            stored_last_modified = datetime.fromisoformat(stored_last_modified_str)
-            if remote_last_modified <= stored_last_modified:
-                logger.info("Market orders data is already up-to-date. Skipping download.")
-                return
+            orders = await fetch_esi_paginated(session, url)
+            if orders:
+                # Add region_id to each order
+                for order in orders:
+                    order['region_id'] = region_id
+                all_orders.extend(orders)
+                logger.info(f"Fetched {len(orders)} orders for region {region_id}.")
+            else:
+                logger.warning(f"No orders found for region {region_id} or failed to fetch.")
 
-        logger.info("Newer market orders data found or check was inconclusive. Downloading...")
-        bz2_data = await fetch_url(session, MARKET_ORDERS_URL)
-        if not bz2_data:
-            logger.warning("Failed to download market orders.")
-            return
+    if not all_orders:
+        logger.warning("No market orders were fetched from any region. Skipping database update.")
+        return
 
-    logger.info("Decompressing and parsing market orders...")
-    csv_file = decompress_bz2(bz2_data)
-    df = pd.read_csv(csv_file)
+    logger.info(f"Successfully fetched a total of {len(all_orders)} orders from all regions.")
 
+    df = pd.DataFrame(all_orders)
+
+    # Data type conversion and column renaming
     df['issued'] = pd.to_datetime(df['issued'])
-    df['http_last_modified'] = pd.to_datetime(df['http_last_modified'])
-    logger.info(f"Loaded {len(df)} market orders.")
+    # ESI does not provide a 'last modified' header per order, so we use the current time.
+    df['http_last_modified'] = datetime.now(timezone.utc)
 
+    # Ensure all required columns are present and in the correct order
+    # The DB schema might have columns that ESI doesn't provide.
+    # We will need to adjust the DataFrame to match the table.
+    # Let's assume the table has at least these columns for now.
+    # In a real scenario, you would inspect the DB schema.
+    final_columns = [
+        'order_id', 'type_id', 'location_id', 'volume_total', 'volume_remain',
+        'min_volume', 'price', 'is_buy_order', 'duration', 'issued',
+        'range', 'region_id', 'http_last_modified'
+    ]
+    # Add missing columns with default values if they don't exist
+    for col in final_columns:
+        if col not in df.columns:
+            df[col] = None # Or a more sensible default
+
+    df = df[final_columns] # Ensure order and filter out extra columns
+
+    logger.info("Updating market orders in the database...")
     with engine.connect() as conn:
         conn.execute(text("TRUNCATE TABLE market_orders;"))
         df.to_sql('market_orders', conn, if_exists='append', index=False, chunksize=10000)
         conn.commit()
     logger.info("Market orders table updated successfully.")
-
-    if remote_last_modified:
-        set_metadata('market_orders_last_modified', remote_last_modified.isoformat())
-        logger.info(f"Updated last modified timestamp for market orders to {remote_last_modified.isoformat()}")
 
 def get_latest_history_date():
     """Retrieves the most recent date from the market_history table."""

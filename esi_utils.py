@@ -28,6 +28,42 @@ async def fetch_esi(session, url):
         logger.error(f"Error fetching from ESI: {e}", exc_info=True)
         return None
 
+async def fetch_esi_paginated(session, url: str) -> list:
+    """
+    Asynchronously fetches all pages from a paginated ESI endpoint.
+    """
+    all_data = []
+    try:
+        # Initial request to get the first page and total number of pages
+        async with session.get(url) as response:
+            response.raise_for_status()
+            pages_header = response.headers.get('X-Pages')
+            total_pages = int(pages_header) if pages_header else 1
+            data = await response.json()
+            all_data.extend(data)
+
+        # If there are more pages, fetch them concurrently
+        if total_pages > 1:
+            tasks = []
+            for page in range(2, total_pages + 1):
+                page_url = f"{url}?page={page}"
+                # We create a new task for each page fetch
+                tasks.append(fetch_esi(session, page_url))
+
+            results = await asyncio.gather(*tasks)
+            for page_data in results:
+                if page_data:
+                    all_data.extend(page_data)
+
+    except aiohttp.ClientError as e:
+        logger.error(f"Error fetching paginated data from {url}: {e}", exc_info=True)
+        return [] # Return empty list on error
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during pagination for {url}: {e}", exc_info=True)
+        return []
+
+    return all_data
+
 async def get_item_details(type_id: int) -> dict:
     """Fetches an item's details (name, desc), using a multi-level cache."""
     default_details = {"name": f"Unknown Item ({type_id})", "description": ""}
