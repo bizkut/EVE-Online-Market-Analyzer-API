@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # --- Configuration ---
 MARKET_HISTORY_BASE_URL = "https://data.everef.net/market-history"
 TOTALS_JSON_URL = f"{MARKET_HISTORY_BASE_URL}/totals.json"
-DATA_RETENTION_DAYS = 90
+DATA_RETENTION_DAYS = 180
 
 async def fetch_url(session, url):
     """Asynchronously fetches content from a URL."""
