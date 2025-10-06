@@ -5,6 +5,7 @@ import json
 import pandas as pd
 import aiohttp
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from sqlalchemy import text
 from database import engine
 from logging_config import logger
@@ -14,6 +15,26 @@ MARKET_ORDERS_URL = "https://data.everef.net/market-orders/market-orders-latest.
 MARKET_HISTORY_BASE_URL = "https://data.everef.net/market-history"
 TOTALS_JSON_URL = f"{MARKET_HISTORY_BASE_URL}/totals.json"
 DATA_RETENTION_DAYS = 90
+
+# --- Metadata Management ---
+def get_metadata(key):
+    """Retrieves a value from the pipeline_metadata table."""
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT value FROM pipeline_metadata WHERE key = :key"), {"key": key}).scalar_one_or_none()
+        return result
+
+def set_metadata(key, value):
+    """Saves or updates a value in the pipeline_metadata table."""
+    with engine.connect() as conn:
+        upsert_sql = text("""
+            INSERT INTO pipeline_metadata (key, value)
+            VALUES (:key, :value)
+            ON CONFLICT (key) DO UPDATE SET
+                value = EXCLUDED.value;
+        """)
+        conn.execute(upsert_sql, {"key": key, "value": value})
+        conn.commit()
+    logger.debug(f"Set metadata for key '{key}'")
 
 # --- Helper Functions ---
 async def fetch_url(session, url):
@@ -32,9 +53,30 @@ def decompress_bz2(data):
 
 # --- Data Fetching and Processing ---
 async def process_market_orders():
-    """Downloads, processes, and updates market orders."""
-    logger.info("Fetching latest market orders...")
+    """Downloads, processes, and updates market orders if new data is available."""
+    logger.info("Checking for new market orders...")
+    remote_last_modified = None
     async with aiohttp.ClientSession() as session:
+        try:
+            async with session.head(MARKET_ORDERS_URL) as response:
+                response.raise_for_status()
+                remote_last_modified_str = response.headers.get('Last-Modified')
+                if remote_last_modified_str:
+                    remote_last_modified = parsedate_to_datetime(remote_last_modified_str)
+                else:
+                    logger.warning("Last-Modified header not found. Proceeding with download.")
+        except aiohttp.ClientError as e:
+            logger.error(f"Could not perform HEAD request on {MARKET_ORDERS_URL}: {e}", exc_info=True)
+            logger.warning("Proceeding with download as a fallback.")
+
+        stored_last_modified_str = get_metadata('market_orders_last_modified')
+        if stored_last_modified_str and remote_last_modified:
+            stored_last_modified = datetime.fromisoformat(stored_last_modified_str)
+            if remote_last_modified <= stored_last_modified:
+                logger.info("Market orders data is already up-to-date. Skipping download.")
+                return
+
+        logger.info("Newer market orders data found or check was inconclusive. Downloading...")
         bz2_data = await fetch_url(session, MARKET_ORDERS_URL)
         if not bz2_data:
             logger.warning("Failed to download market orders.")
@@ -44,18 +86,19 @@ async def process_market_orders():
     csv_file = decompress_bz2(bz2_data)
     df = pd.read_csv(csv_file)
 
-    # Data cleaning and type conversion
     df['issued'] = pd.to_datetime(df['issued'])
     df['http_last_modified'] = pd.to_datetime(df['http_last_modified'])
-
     logger.info(f"Loaded {len(df)} market orders.")
 
-    # Update database (truncate and load)
     with engine.connect() as conn:
         conn.execute(text("TRUNCATE TABLE market_orders;"))
         df.to_sql('market_orders', conn, if_exists='append', index=False, chunksize=10000)
         conn.commit()
     logger.info("Market orders table updated successfully.")
+
+    if remote_last_modified:
+        set_metadata('market_orders_last_modified', remote_last_modified.isoformat())
+        logger.info(f"Updated last modified timestamp for market orders to {remote_last_modified.isoformat()}")
 
 async def process_market_history():
     """Downloads, processes, and updates market history for the last 90 days."""

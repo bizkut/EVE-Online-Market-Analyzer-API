@@ -77,6 +77,14 @@ def initialize_database():
         );
     """)
 
+    # Create pipeline_metadata table for storing pipeline state
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_metadata (
+            key VARCHAR(255) PRIMARY KEY,
+            value TEXT
+        );
+    """)
+
     # --- Simple Schema Migration ---
     # Add description column to item_names if it doesn't exist
     cur.execute("""
