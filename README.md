@@ -1,13 +1,13 @@
 # EVE Online Market Profitability API
 
-This project is a FastAPI-based backend system that analyzes the EVE Online market using Everef datasets to determine and expose the most profitable tradable items through API endpoints. The system calculates current profitability, market trends, and predicted buy/sell prices based on historical data from the past 90 days.
+This project is a FastAPI-based backend system that analyzes the EVE Online market using Everef datasets to determine and expose the most profitable tradable items through API endpoints. The system calculates current profitability, market trends, and predicted buy/sell prices based on historical data.
 
 ## Features
 
-- **Live ESI Integration**: Fetches item and region names directly from the EVE Online ESI API, with a robust, multi-level caching system (in-memory -> database -> API) to ensure high performance and reliability.
-- **Data-Driven Analysis**: Utilizes Everef's market orders and history datasets for comprehensive market analysis.
+- **Live ESI Integration**: Fetches item and region names directly from the EVE Online ESI API.
+- **Robust Caching**: Uses a multi-level cache (in-memory -> database -> API) for static data and **Redis** for API endpoint caching to ensure high performance and reliability.
+- **Data-Driven Analysis**: Performs a hybrid analysis using live market orders for current profitability and historical data for long-term trends.
 - **Profitability Metrics**: Calculates key metrics such as `profit_per_unit`, `roi_percent`, `price_volume_correlation`, and a custom `profit_score` to rank items.
-- **Trend Analysis**: Determines market trends and volatility to inform trading decisions.
 - **Price Prediction**: Includes a simple machine learning model to predict next-day buy/sell prices.
 - **Scheduled Data Refreshes**: Automatically updates market data every hour using APScheduler.
 - **Optional API Key**: The data refresh endpoint can be optionally secured with an API key.
@@ -19,6 +19,7 @@ This project is a FastAPI-based backend system that analyzes the EVE Online mark
 - **Language**: Python 3.11
 - **Framework**: FastAPI
 - **Database**: PostgreSQL
+- **Cache**: Redis
 - **Scheduler**: APScheduler
 - **Key Libraries**: Pandas, SQLAlchemy, Scikit-learn, AIOHTTP
 
@@ -52,10 +53,10 @@ This is the recommended method for running the application, as it provides a con
     ```
     This command will:
     - Build the Docker image for the FastAPI application.
-    - Start the `web` (FastAPI) and `db` (PostgreSQL) services.
+    - Start the `web` (FastAPI), `db` (PostgreSQL), and `redis` services.
     - Automatically run the `entrypoint.sh` script, which waits for the database to be ready, initializes the schema, and runs the initial data pipeline.
 
-    The API will be available at `http://localhost:8000`. The initial data load may take several minutes. The first time the API is called for new items or regions, it will fetch their names from the ESI API and cache them in the database.
+    The API will be available at `http://localhost:8000`. The initial data load may take several minutes.
 
 ## API Documentation
 

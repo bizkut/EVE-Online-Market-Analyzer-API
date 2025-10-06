@@ -12,8 +12,9 @@ from logging_config import logger
 
 # Caching imports
 from fastapi_cache import FastAPICache
-from fastapi_cache.backends.inmemory import InMemoryBackend
+from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.decorator import cache
+from redis import asyncio as aioredis
 
 # Import project modules
 import analysis
@@ -80,7 +81,12 @@ async def lifespan(app: FastAPI):
     # On startup
     logger.info("Application startup...")
     esi_utils.pre_populate_caches_from_db()
-    FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
+
+    # Initialize Redis cache
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
+    redis = aioredis.from_url(redis_url)
+    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+
     start_scheduler()
     yield
     # On shutdown
