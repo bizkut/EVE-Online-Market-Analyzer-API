@@ -1,0 +1,55 @@
+name: Debug EVE Market API
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  debug-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: eve_market
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Set up environment variables
+      run: |
+        echo "DATABASE_URL=postgresql://user:password@localhost/eve_market" >> $GITHUB_ENV
+        echo "POSTGRES_USER=user" >> $GITHUB_ENV
+        echo "POSTGRES_PASSWORD=password" >> $GITHUB_ENV
+        echo "POSTGRES_DB=eve_market" >> $GITHUB_ENV
+
+    - name: Initialize Database
+      run: python database.py
+
+    - name: Run Data Pipeline
+      run: python data_pipeline.py
+
+    - name: Run FastAPI Server
+      run: uvicorn main:app --host 0.0.0.0 --port 8000 --log-level debug
