@@ -19,8 +19,8 @@ python database.py
 echo "Running initial data pipeline..."
 python data_pipeline.py
 
-# Set default log level if not provided
-LOG_LEVEL=${LOG_LEVEL:-info}
+# Set default log level if not provided and convert to lowercase
+LOG_LEVEL=$(echo "${LOG_LEVEL:-info}" | tr '[:upper:]' '[:lower:]')
 
 # Start the FastAPI server using exec.
 echo "Starting server with log level: $LOG_LEVEL"
