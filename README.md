@@ -10,7 +10,7 @@ This project is a FastAPI-based backend system that analyzes the EVE Online mark
 - **Data-Driven Analysis**: Performs a hybrid analysis using live market orders for current profitability and historical data for long-term trends.
 - **Profitability Metrics**: Calculates key metrics such as `profit_per_unit`, `roi_percent`, `price_volume_correlation`, and a custom `profit_score` to rank items.
 - **Price Prediction**: Includes a simple machine learning model to predict next-day buy/sell prices.
-- **Scheduled Data Refreshes**: Automatically updates market data every hour using APScheduler.
+- **Scheduled Data Refreshes**: Automatically updates market data, runs analysis, and trains models using a distributed task queue (Celery).
 - **Optional API Key**: The data refresh endpoint can be optionally secured with an API key.
 - **Advanced Filtering**: Allows filtering of top items by minimum volume and ROI.
 - **Containerized**: Fully containerized with Docker for easy and reliable deployment.
@@ -21,7 +21,7 @@ This project is a FastAPI-based backend system that analyzes the EVE Online mark
 - **Framework**: FastAPI
 - **Database**: PostgreSQL
 - **Cache**: Redis
-- **Scheduler**: APScheduler
+- **Task Queue**: Celery
 - **Key Libraries**: Pandas, SQLAlchemy, Scikit-learn, AIOHTTP
 
 ## Getting Started
@@ -53,8 +53,8 @@ This is the recommended method for running the application, as it provides a con
     docker-compose up --build
     ```
     This command will:
-    - Build the Docker image for the FastAPI application.
-    - Start the `web` (FastAPI), `db` (PostgreSQL), and `redis` services.
+    - Build the Docker image for the application.
+    - Start all services, including the FastAPI backend, PostgreSQL database, Redis cache, Celery worker, and Celery beat scheduler.
     - Automatically run the `entrypoint.sh` script, which waits for the database to be ready, initializes the schema, and runs the initial data pipeline.
 
     The API will be available at `http://localhost:8000`. The initial data load may take several minutes.
@@ -80,6 +80,7 @@ Once the application is running, the interactive API documentation (Swagger UI) 
 ├── .github/workflows/debug.yml  # GitHub Actions workflow for debugging
 ├── .env.example                 # Example environment variables
 ├── analysis.py                  # Profitability and trend analysis logic
+├── celery_app.py                # Celery application and task scheduling
 ├── data_pipeline.py             # Data fetching, parsing, and storage
 ├── database.py                  # Database connection and schema initialization
 ├── Dockerfile                   # Defines the application container
@@ -89,6 +90,5 @@ Once the application is running, the interactive API documentation (Swagger UI) 
 ├── main.py                      # FastAPI application entrypoint
 ├── predict.py                   # Price prediction model
 ├── README.md                    # This file
-├── requirements.txt             # Python dependencies
-└── scheduler.py                 # Scheduled data refresh logic
+└── requirements.txt             # Python dependencies
 ```

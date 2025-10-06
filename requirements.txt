@@ -8,6 +8,7 @@ fastapi-cache2
 scikit-learn
 apscheduler
 psycopg2-binary
+celery
 python-dotenv
 sqlalchemy
 redis
