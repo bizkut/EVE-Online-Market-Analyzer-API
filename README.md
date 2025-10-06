@@ -4,7 +4,8 @@ This project is a FastAPI-based backend system that analyzes the EVE Online mark
 
 ## Features
 
-- **Live ESI Integration**: Fetches item and region names directly from the EVE Online ESI API.
+- **Live ESI Integration**: Fetches item names and descriptions directly from the EVE Online ESI API.
+- **Rich Item Data**: API responses include item descriptions and a constructed image URL for easy frontend integration.
 - **Robust Caching**: Uses a multi-level cache (in-memory -> database -> API) for static data and **Redis** for API endpoint caching to ensure high performance and reliability.
 - **Data-Driven Analysis**: Performs a hybrid analysis using live market orders for current profitability and historical data for long-term trends.
 - **Profitability Metrics**: Calculates key metrics such as `profit_per_unit`, `roi_percent`, `price_volume_correlation`, and a custom `profit_score` to rank items.
@@ -60,7 +61,7 @@ This is the recommended method for running the application, as it provides a con
 
 ## API Documentation
 
-Once the application is running, the interactive API documentation (Swagger UI) will be available at `http://localhost:8000/docs`.
+Once the application is running, the interactive API documentation (Swagger UI) will be available at `http://localhost:8000/docs`. The API response for items includes `description` and `image_url` fields for easy frontend integration.
 
 ### Main Endpoints
 
