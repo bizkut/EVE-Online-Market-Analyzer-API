@@ -104,30 +104,62 @@ async def process_market_orders():
         set_metadata('market_orders_last_modified', remote_last_modified.isoformat())
         logger.info(f"Updated last modified timestamp for market orders to {remote_last_modified.isoformat()}")
 
+def get_latest_history_date():
+    """Retrieves the most recent date from the market_history table."""
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT MAX(date) FROM market_history")).scalar_one_or_none()
+        # In this case, SQLAlchemy returns a datetime.date object, which is perfect.
+        return result
+
 async def process_market_history():
-    """Downloads, processes, and updates market history for the last 90 days."""
-    logger.info("Fetching market history totals...")
+    """
+    Downloads and processes market history files from everef.
+    On first run, it fetches the last 90 days.
+    On subsequent runs, it only fetches data since the last recorded date.
+    """
+    logger.info("Starting market history processing...")
+
+    latest_db_date = get_latest_history_date()
+    today = datetime.now(timezone.utc).date()
+
+    if latest_db_date:
+        start_date = latest_db_date + timedelta(days=1)
+        logger.info(f"Resuming market history download from {start_date.strftime('%Y-%m-%d')}.")
+    else:
+        start_date = today - timedelta(days=DATA_RETENTION_DAYS)
+        logger.info(f"No existing history data found. Starting initial download for the past {DATA_RETENTION_DAYS} days.")
+
+    if start_date > today:
+        logger.info("Market history is already up-to-date.")
+        return
+
+    days_to_fetch = (today - start_date).days + 1
+    date_range = [start_date + timedelta(days=i) for i in range(days_to_fetch)]
+
+    results = []
     async with aiohttp.ClientSession() as session:
+        logger.info("Fetching market history totals to see available data...")
         totals_data = await fetch_url(session, TOTALS_JSON_URL)
         if not totals_data:
-            logger.warning("Failed to fetch market history totals.")
+            logger.warning("Failed to fetch market history totals. Cannot proceed.")
             return
 
-    available_dates_str = json.loads(totals_data).keys()
+        available_dates = set(json.loads(totals_data).keys())
 
-    tasks = []
-    today = datetime.now(timezone.utc).date()
-    date_range = [today - timedelta(days=i) for i in range(DATA_RETENTION_DAYS)]
-
-    logger.info(f"Checking for history data for the past {DATA_RETENTION_DAYS} days...")
-    async with aiohttp.ClientSession() as session:
+        tasks = []
+        logger.info(f"Checking for available history files from {start_date.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}...")
         for date_obj in date_range:
             date_str = date_obj.strftime('%Y-%m-%d')
-            if date_str in available_dates_str:
+            if date_str in available_dates:
                 year = date_obj.strftime('%Y')
                 url = f"{MARKET_HISTORY_BASE_URL}/{year}/market-history-{date_str}.csv.bz2"
                 tasks.append(fetch_url(session, url))
 
+        if not tasks:
+            logger.info("No new market history files found in the specified date range.")
+            return
+
+        logger.info(f"Found {len(tasks)} new market history files to download.")
         results = await asyncio.gather(*tasks)
 
     all_history_df = []
@@ -141,20 +173,20 @@ async def process_market_history():
                 logger.error(f"Could not process a history file: {e}", exc_info=True)
 
     if not all_history_df:
-        logger.info("No new market history data found.")
+        logger.info("No new market history data to process.")
         return
 
     history_df = pd.concat(all_history_df, ignore_index=True)
 
     # Data cleaning and type conversion
-    history_df['date'] = pd.to_datetime(history_df['date'])
+    history_df['date'] = pd.to_datetime(history_df['date']).dt.date
     history_df['http_last_modified'] = pd.to_datetime(history_df['http_last_modified'])
 
-    logger.info(f"Loaded {len(history_df)} total market history records.")
+    logger.info(f"Loaded {len(history_df)} total new market history records.")
 
     # Insert into a temporary table first
     with engine.connect() as conn:
-        history_df.to_sql('market_history_temp', conn, if_exists='replace', index=False)
+        history_df.to_sql('market_history_temp', conn, if_exists='replace', index=False, chunksize=10000)
 
         # Use INSERT ON CONFLICT to upsert data into the main table
         upsert_sql = text("""
