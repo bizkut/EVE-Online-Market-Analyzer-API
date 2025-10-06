@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Image from 'next/image';
 import { useQuery } from '@tanstack/react-query';
 import { getItemDetails } from '@/lib/api';
 import { useModalStore } from '@/stores/modalStore';
@@ -57,7 +58,11 @@ const ItemDetailModal = () => {
               <Dialog.Panel className="w-full max-w-6xl transform overflow-hidden rounded-2xl bg-panel p-6 text-left align-middle shadow-xl transition-all border border-gray-700">
                 <Dialog.Title as="h3" className="text-xl font-bold leading-6 text-white flex justify-between items-center font-orbitron">
                   <div className="flex items-center gap-4">
-                    {item && !isLoading ? <img src={item.thumbnail_url} alt={item.name} className="h-12 w-12 rounded-md" /> : <div className="h-12 w-12 rounded-md bg-gray-700 animate-pulse" />}
+                    {item && !isLoading ? (
+                      <Image src={item.thumbnail_url} alt={item.name} width={48} height={48} className="rounded-md" />
+                    ) : (
+                      <div className="h-12 w-12 rounded-md bg-gray-700 animate-pulse" />
+                    )}
                     <span>{item?.name || 'Loading...'}</span>
                   </div>
                   <button onClick={closeModal} className="p-1 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white transition-colors">
