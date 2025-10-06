@@ -3,7 +3,11 @@ import psycopg2
 from psycopg2 import sql
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from logging_config import logger
+import logging
+import logging_config  # Ensure logging is configured
+
+# --- Setup Logger ---
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 

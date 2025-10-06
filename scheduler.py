@@ -1,7 +1,11 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from data_pipeline import main as run_data_pipeline
 import asyncio
-from logging_config import logger
+import logging
+import logging_config  # Ensure logging is configured
+
+# --- Setup Logger ---
+logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 

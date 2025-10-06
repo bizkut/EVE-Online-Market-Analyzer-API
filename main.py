@@ -6,9 +6,11 @@ from typing import List, Optional
 from datetime import datetime, timezone
 import asyncio
 from contextlib import asynccontextmanager
+import logging
+import logging_config  # Ensure logging is configured
 
-# Centralized logging
-from logging_config import logger
+# --- Setup Logger ---
+logger = logging.getLogger(__name__)
 
 # Caching imports
 from fastapi_cache import FastAPICache

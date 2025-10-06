@@ -2,7 +2,11 @@ import aiohttp
 import asyncio
 from sqlalchemy import text
 from database import engine
-from logging_config import logger
+import logging
+import logging_config  # Ensure logging is configured
+
+# --- Setup Logger ---
+logger = logging.getLogger(__name__)
 
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 
