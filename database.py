@@ -61,11 +61,19 @@ def initialize_database():
         );
     """)
 
-    # Create regions table
+    # Create regions table (used for caching region names)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS regions (
             region_id INT PRIMARY KEY,
             name VARCHAR(255) UNIQUE
+        );
+    """)
+
+    # Create item_names table (used for caching item names)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS item_names (
+            type_id INT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL
         );
     """)
 

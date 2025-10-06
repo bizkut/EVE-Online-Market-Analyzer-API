@@ -16,8 +16,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application's code into the container at /app
 COPY . .
 
-# Download SDE data during the build
-RUN python sde_utils.py
 
 # Make port 8000 available to the world outside this container
 EXPOSE 8000

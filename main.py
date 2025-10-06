@@ -17,7 +17,7 @@ from fastapi_cache.decorator import cache
 import analysis
 import predict
 import data_pipeline
-import sde_utils
+import esi_utils
 from database import get_db_connection
 from scheduler import start_scheduler, stop_scheduler
 
@@ -27,10 +27,13 @@ logger = logging.getLogger("uvicorn.error")
 # --- Security ---
 API_KEY = os.getenv("API_KEY")
 
-async def verify_api_key(x_api_key: str = Header(...)):
-    """Dependency to verify the API key."""
-    if not API_KEY or x_api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API Key")
+async def verify_api_key(x_api_key: str = Header(None)):
+    """Dependency to verify the API key. Key is optional."""
+    if API_KEY: # Only enforce the key if it's set in the environment
+        if x_api_key is None:
+            raise HTTPException(status_code=400, detail="X-API-Key header missing")
+        if x_api_key != API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid API Key")
 
 # --- Pydantic Models for API Responses ---
 class ItemAnalysis(BaseModel):
@@ -76,7 +79,7 @@ class Region(BaseModel):
 async def lifespan(app: FastAPI):
     # On startup
     logger.info("Application startup...")
-    sde_utils.load_sde_data()
+    esi_utils.pre_populate_caches_from_db()
     FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
     start_scheduler()
     yield
@@ -117,33 +120,34 @@ async def get_top_items(
 
         top_items = results_df.head(limit).to_dict(orient='records')
 
+        # Fetch predictions concurrently
         prediction_tasks = [
             run_in_threadpool(predict.predict_next_day_prices, item['type_id'], region) for item in top_items
         ]
         predictions = await asyncio.gather(*prediction_tasks)
 
-        response_items = []
-        for i, item in enumerate(top_items):
-            prediction_result = predictions[i]
-            response_items.append(
-                ItemAnalysis(
-                    type_id=item['type_id'],
-                    region_id=region,
-                    item_name=sde_utils.get_item_name(item['type_id']),
-                    avg_buy_price=item.get('avg_buy_price'),
-                    avg_sell_price=item.get('avg_sell_price'),
-                    predicted_buy_price=prediction_result.get('predicted_buy_price'),
-                    predicted_sell_price=prediction_result.get('predicted_sell_price'),
-                    profit_per_unit=item.get('profit_per_unit'),
-                    roi_percent=item.get('roi_percent'),
-                    avg_daily_volume=item.get('avg_daily_volume'),
-                    volatility_30d=item.get('volatility_30d'),
-                    trend_direction=item.get('trend_direction'),
-                    price_volume_correlation=item.get('price_volume_correlation'),
-                    last_updated=datetime.now(timezone.utc)
-                )
+        # Helper to build response items concurrently
+        async def create_response_item(item, prediction_result):
+            item_name = await esi_utils.get_item_name(item['type_id'])
+            return ItemAnalysis(
+                type_id=item['type_id'],
+                region_id=region,
+                item_name=item_name,
+                avg_buy_price=item.get('avg_buy_price'),
+                avg_sell_price=item.get('avg_sell_price'),
+                predicted_buy_price=prediction_result.get('predicted_buy_price'),
+                predicted_sell_price=prediction_result.get('predicted_sell_price'),
+                profit_per_unit=item.get('profit_per_unit'),
+                roi_percent=item.get('roi_percent'),
+                avg_daily_volume=item.get('avg_daily_volume'),
+                volatility_30d=item.get('volatility_30d'),
+                trend_direction=item.get('trend_direction'),
+                price_volume_correlation=item.get('price_volume_correlation'),
+                last_updated=datetime.now(timezone.utc)
             )
-        return response_items
+
+        response_tasks = [create_response_item(top_items[i], predictions[i]) for i in range(len(top_items))]
+        return await asyncio.gather(*response_tasks)
     except Exception as e:
         logger.error(f"Error in get_top_items: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
@@ -158,12 +162,16 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
         raise HTTPException(status_code=404, detail="Item not found or no profitable trades available.")
 
     item = item_data.iloc[0].to_dict()
-    prediction_result = await run_in_threadpool(predict.predict_next_day_prices, type_id, region_id)
+
+    # Concurrently fetch prediction and item name
+    prediction_task = run_in_threadpool(predict.predict_next_day_prices, type_id, region_id)
+    item_name_task = esi_utils.get_item_name(type_id)
+    prediction_result, item_name = await asyncio.gather(prediction_task, item_name_task)
 
     analysis_data = ItemAnalysis(
         type_id=type_id,
         region_id=region_id,
-        item_name=sde_utils.get_item_name(type_id),
+        item_name=item_name,
         avg_buy_price=item.get('avg_buy_price'),
         avg_sell_price=item.get('avg_sell_price'),
         predicted_buy_price=prediction_result.get('predicted_buy_price'),
@@ -180,7 +188,7 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
     return ItemDetail(
         type_id=type_id,
         region_id=region_id,
-        item_name=sde_utils.get_item_name(type_id),
+        item_name=item_name,
         analysis=analysis_data,
         prediction_confidence=prediction_result.get('confidence_score')
     )
@@ -217,11 +225,11 @@ def get_system_status():
         return SystemStatus(status="error", latest_market_order_update=None, latest_market_history_update=None)
 
 @app.get("/api/regions", response_model=List[Region])
-def get_regions():
+async def get_regions():
     """
-    Returns a list of available regions from the SDE.
+    Returns a list of all available regions from the ESI.
     """
-    return sde_utils.get_all_regions()
+    return await esi_utils.get_all_regions()
 
 @app.get("/")
 async def root():
