@@ -1,7 +1,5 @@
 import logging
-logging.basicConfig(filename='app.log', level=logging.DEBUG)
-logging.debug("Starting application...")
-
+import os
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -16,13 +14,14 @@ from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi_cache.decorator import cache
 
 # Import project modules
-logging.debug("Importing project modules...")
 import analysis
 import predict
 import data_pipeline
 from database import get_db_connection
 from scheduler import start_scheduler, stop_scheduler
-logging.debug("Project modules imported.")
+
+# Use the Uvicorn logger
+logger = logging.getLogger("uvicorn.error")
 
 # --- Pydantic Models for API Responses ---
 class ItemAnalysis(BaseModel):
@@ -66,23 +65,21 @@ class Region(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # On startup
-    logging.debug("Application startup...")
+    logger.info("Application startup...")
     FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
     start_scheduler()
     yield
     # On shutdown
-    logging.debug("Application shutdown...")
+    logger.info("Application shutdown...")
     stop_scheduler()
 
 # --- App Initialization ---
-logging.debug("Initializing FastAPI app...")
 app = FastAPI(
     title="EVE Online Market Profitability API",
     description="Analyzes EVE Online market data to find profitable trading opportunities.",
     version="1.0.0",
     lifespan=lifespan
 )
-logging.debug("FastAPI app initialized.")
 
 # --- Placeholder Data ---
 ITEM_NAMES = {
@@ -135,7 +132,7 @@ async def get_top_items(
             )
         return response_items
     except Exception as e:
-        logging.error("Error in get_top_items", exc_info=True)
+        logger.error(f"Error in get_top_items: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 @app.get("/api/item/{type_id}", response_model=ItemDetail)
@@ -212,5 +209,5 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    logging.debug("Starting Uvicorn server...")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level=log_level)
