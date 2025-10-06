@@ -61,7 +61,7 @@ def calculate_price_metrics(orders_df: pd.DataFrame) -> pd.DataFrame:
     price_metrics = pd.merge(avg_buy_prices, avg_sell_prices, on='type_id', how='outer')
     return price_metrics
 
-def calculate_history_metrics(history_df_30d: pd.DataFrame, history_df_90d: pd.DataFrame) -> pd.DataFrame:
+def calculate_history_metrics(history_df_30d: pd.DataFrame, history_df_180d: pd.DataFrame) -> pd.DataFrame:
     """Calculates metrics based on historical data."""
     # 30-day metrics
     history_metrics_30d = history_df_30d.groupby('type_id').agg(
@@ -69,8 +69,8 @@ def calculate_history_metrics(history_df_30d: pd.DataFrame, history_df_90d: pd.D
         volatility_30d=('average', 'std')
     ).reset_index()
 
-    # 90-day metrics
-    history_groups_90d = history_df_90d.groupby('type_id')
+    # 180-day metrics
+    history_groups_180d = history_df_180d.groupby('type_id')
 
     def get_trend(df):
         df = df.dropna(subset=['average', 'date']).copy()
@@ -84,13 +84,13 @@ def calculate_history_metrics(history_df_30d: pd.DataFrame, history_df_90d: pd.D
         except (np.linalg.LinAlgError, ValueError):
             return 0
 
-    trends = history_groups_90d.apply(get_trend, include_groups=False).to_frame('trend_direction').reset_index()
+    trends = history_groups_180d.apply(get_trend, include_groups=False).to_frame('trend_direction').reset_index()
 
     def get_correlation(df):
         if len(df['average']) < 2 or len(df['volume']) < 2: return 0.0
         return df['average'].corr(df['volume'])
 
-    correlations = history_groups_90d.apply(get_correlation, include_groups=False).to_frame('price_volume_correlation').reset_index()
+    correlations = history_groups_180d.apply(get_correlation, include_groups=False).to_frame('price_volume_correlation').reset_index()
 
     # Merge all historical metrics
     history_metrics = pd.merge(history_metrics_30d, trends, on='type_id', how='left')
@@ -101,21 +101,21 @@ def analyze_market_data(region_id: int):
     """
     Performs a hybrid market analysis for a given region.
     - Current profitability from live orders.
-    - Historical context from 90-day history.
+    - Historical context from 180-day history.
     """
     logger.info(f"Starting hybrid market analysis for region {region_id}...")
 
     # Fetch both live and historical data
     orders_df = get_market_orders(region_id)
     history_df_30d = get_market_history(region_id, days=30)
-    history_df_90d = get_market_history(region_id, days=90)
+    history_df_180d = get_market_history(region_id, days=180)
 
-    if history_df_30d.empty or history_df_90d.empty or orders_df.empty:
+    if history_df_30d.empty or history_df_180d.empty or orders_df.empty:
         logger.warning(f"Insufficient data to perform analysis for region {region_id}.")
         return pd.DataFrame()
 
     price_metrics = calculate_price_metrics(orders_df)
-    history_metrics = calculate_history_metrics(history_df_30d, history_df_90d)
+    history_metrics = calculate_history_metrics(history_df_30d, history_df_180d)
 
     # Merge live and historical data
     analysis_df = pd.merge(price_metrics, history_metrics, on='type_id', how='inner')
