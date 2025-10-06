@@ -93,10 +93,46 @@ async def lifespan(app: FastAPI):
     redis = aioredis.from_url(redis_url)
     FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
 
-    # On startup, the API server no longer triggers data pipeline or analysis.
-    # This responsibility is now fully delegated to the Celery Beat scheduler,
-    # which will trigger the tasks periodically. This ensures the API server
-    # starts quickly and does not perform long-running, blocking tasks.
+    # --- Initial Data Population Trigger ---
+    # On startup, check if the database is empty. If it is, trigger an
+    # initial data fetch and analysis asynchronously using Celery.
+    # This ensures data is available as soon as possible without blocking
+    # the API server from starting.
+    async def trigger_initial_setup_if_needed():
+        logger.info("Performing initial data check...")
+        try:
+            def db_check():
+                """Synchronous function to check for data in the database."""
+                try:
+                    with get_db_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT EXISTS (SELECT 1 FROM market_history);")
+                        return cur.fetchone()[0]
+                except Exception:
+                    # This can happen if the table doesn't exist yet on the very first run.
+                    # In this case, we assume no data exists.
+                    logger.warning("Could not check for market history, assuming it's empty.")
+                    return False
+
+            history_exists = await run_in_threadpool(db_check)
+
+            if not history_exists:
+                logger.info("No market history data found. Triggering initial data pipeline and analysis task chain via Celery.")
+                task_chain = (
+                    data_pipeline.run_data_pipeline_task.s() |
+                    analysis.run_analysis_task.s()
+                )
+                task_chain.apply_async()
+            else:
+                logger.info("Existing market data found. Skipping initial data fetch.")
+
+        except Exception as e:
+            logger.error(f"Failed during initial data check: {e}", exc_info=True)
+
+    # Run the check, but don't block the main startup flow for too long.
+    # The check itself is quick because of the threadpool.
+    await trigger_initial_setup_if_needed()
+
     logger.info("Celery services will handle all background tasks. No in-app scheduler started.")
     yield
     # On shutdown
