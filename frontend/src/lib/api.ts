@@ -41,8 +41,8 @@ export const getTopItems = async (region: string = '10000002', limit: number = 1
   return response.data;
 };
 
-export const getItemDetails = async (typeId: number): Promise<ItemDetail> => {
-  const response = await api.get(`/item/${typeId}`);
+export const getItemDetails = async (typeId: number, regionId: number): Promise<ItemDetail> => {
+  const response = await api.get(`/item/${typeId}?region_id=${regionId}`);
   return response.data;
 };
 
