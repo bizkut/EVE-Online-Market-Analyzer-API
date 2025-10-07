@@ -149,7 +149,7 @@ app = FastAPI(
 )
 
 # --- API Endpoints ---
-@app.get("/api/top-items", response_model=List[ItemAnalysis])
+@app.get("/top-items", response_model=List[ItemAnalysis])
 @cache(expire=600)  # Cache for 10 minutes
 async def get_top_items(
     limit: int = Query(100, ge=1, le=1000),
@@ -216,7 +216,7 @@ async def get_top_items(
         logger.error(f"Error in get_top_items: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
-@app.get("/api/item/{type_id}", response_model=ItemDetail)
+@app.get("/item/{type_id}", response_model=ItemDetail)
 @cache(expire=600)  # Cache for 10 minutes
 async def get_item_details(type_id: int, region_id: int = Query(10000001)):
     # Fetch pre-computed analysis data for a specific item
@@ -261,7 +261,7 @@ async def get_item_details(type_id: int, region_id: int = Query(10000001)):
         prediction_confidence=prediction_result.get('confidence_score')
     )
 
-@app.post("/api/refresh", response_model=RefreshStatus, dependencies=[Depends(verify_api_key)])
+@app.post("/refresh", response_model=RefreshStatus, dependencies=[Depends(verify_api_key)])
 async def force_refresh():
     """
     Triggers a manual refresh of the market datasets and analysis via Celery.
@@ -283,7 +283,7 @@ async def force_refresh():
         logger.error(f"Failed to trigger Celery refresh task: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start refresh: {e}")
 
-@app.get("/api/status", response_model=SystemStatusResponse)
+@app.get("/status", response_model=SystemStatusResponse)
 def get_system_status():
     """
     Returns the current status of the data pipeline and analysis tasks.
@@ -305,7 +305,7 @@ def get_system_status():
         logger.error(f"Error getting system status: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Error fetching system status.")
 
-@app.get("/api/regions", response_model=List[Region])
+@app.get("/regions", response_model=List[Region])
 async def get_regions():
     """
     Returns a list of all available regions from the ESI.

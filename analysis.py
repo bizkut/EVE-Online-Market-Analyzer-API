@@ -40,26 +40,35 @@ def get_market_history(region_id: int, days: int) -> pd.DataFrame:
 def calculate_price_metrics(orders_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculates current profitability metrics from live market orders.
-    - avg_buy_price: Mean of the lowest 10% of buy orders.
-    - avg_sell_price: Mean of the highest 10% of sell orders.
+    - avg_buy_price: Mean of the top 10% of buy orders (highest prices).
+    - avg_sell_price: Mean of the bottom 10% of sell orders (lowest prices).
     """
-    buy_orders = orders_df[orders_df['is_buy_order'] == True].copy()
-    sell_orders = orders_df[orders_df['is_buy_order'] == False].copy()
+    buy_orders = orders_df[orders_df['is_buy_order']].copy()
+    sell_orders = orders_df[~orders_df['is_buy_order']].copy()
 
-    def get_avg_bottom_10_percent_price(df):
-        if df.empty: return np.nan
-        if len(df) < 2: return df['price'].mean()
-        price_10th_percentile = df['price'].quantile(0.1)
-        return df[df['price'] <= price_10th_percentile]['price'].mean()
+    def get_avg_top_10_percent_price(prices: pd.Series):
+        """Calculates the mean of the highest 10% of prices."""
+        if prices.empty or len(prices) < 2:
+            return prices.mean()
+        percentile_90 = prices.quantile(0.9)
+        return prices[prices >= percentile_90].mean()
 
-    def get_avg_top_10_percent_price(df):
-        if df.empty: return np.nan
-        if len(df) < 2: return df['price'].mean()
-        price_90th_percentile = df['price'].quantile(0.9)
-        return df[df['price'] >= price_90th_percentile]['price'].mean()
+    def get_avg_bottom_10_percent_price(prices: pd.Series):
+        """Calculates the mean of the lowest 10% of prices."""
+        if prices.empty or len(prices) < 2:
+            return prices.mean()
+        percentile_10 = prices.quantile(0.1)
+        return prices[prices <= percentile_10].mean()
 
-    avg_buy_prices = buy_orders.groupby('type_id').apply(get_avg_bottom_10_percent_price, include_groups=False).to_frame('avg_buy_price').reset_index()
-    avg_sell_prices = sell_orders.groupby('type_id').apply(get_avg_top_10_percent_price, include_groups=False).to_frame('avg_sell_price').reset_index()
+    # For buy orders, we are interested in the highest buy prices (top 10%)
+    avg_buy_prices = buy_orders.groupby('type_id')['price'].agg(
+        avg_buy_price=get_avg_top_10_percent_price
+    ).reset_index()
+
+    # For sell orders, we are interested in the lowest sell prices (bottom 10%)
+    avg_sell_prices = sell_orders.groupby('type_id')['price'].agg(
+        avg_sell_price=get_avg_bottom_10_percent_price
+    ).reset_index()
 
     price_metrics = pd.merge(avg_buy_prices, avg_sell_prices, on='type_id', how='outer')
     return price_metrics
