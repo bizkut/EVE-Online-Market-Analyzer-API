@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useQuery } from '@tanstack/react-query';
 import { getItemDetails } from '@/lib/api';
 import { useModalStore } from '@/stores/modalStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { Dialog, Transition } from '@headlessui/react';
 import { X, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import TrendChart from './TrendChart';
@@ -16,9 +17,10 @@ const formatCurrency = (num: number) => new Intl.NumberFormat('en-US', { style: 
 
 const ItemDetailModal = () => {
   const { isOpen, closeModal, selectedItemId } = useModalStore();
+  const { region } = useSettingsStore();
   const { data: item, isLoading, error } = useQuery({
-    queryKey: ['itemDetails', selectedItemId],
-    queryFn: () => getItemDetails(selectedItemId!),
+    queryKey: ['itemDetails', selectedItemId, region],
+    queryFn: () => getItemDetails(selectedItemId!, parseInt(region, 10)),
     enabled: !!selectedItemId,
   });
 
