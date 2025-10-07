@@ -16,9 +16,9 @@ import {
 import { ArrowUpDown, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { TableSkeleton } from './SkeletonLoader';
 
-const formatNumber = (num: number) => new Intl.NumberFormat('en-US').format(num);
-const formatCurrency = (num: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'ISK' }).format(num);
-const formatPercent = (num: number) => `${(num * 100).toFixed(2)}%`;
+const formatNumber = (num: number | null) => num ? new Intl.NumberFormat('en-US').format(num) : 'N/A';
+const formatCurrency = (num: number | null) => num ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'ISK' }).format(num) : 'N/A';
+const formatPercent = (num: number | null) => num ? `${(num * 100).toFixed(2)}%` : 'N/A';
 
 const columns: ColumnDef<Item>[] = [
     {
@@ -75,6 +75,7 @@ const columns: ColumnDef<Item>[] = [
         ),
         cell: ({ row }) => {
             const profit = row.original.profit_per_unit;
+            if (profit === null) return 'N/A';
             const color = profit > 0 ? 'text-profit-positive' : profit < 0 ? 'text-profit-negative' : '';
             return <span className={color}>{formatCurrency(profit)}</span>;
         },
@@ -89,6 +90,7 @@ const columns: ColumnDef<Item>[] = [
         ),
         cell: ({ row }) => {
             const roi = row.original.roi_percent;
+            if (roi === null) return 'N/A';
             const color = roi > 0 ? 'text-profit-positive' : roi < 0 ? 'text-profit-negative' : '';
             return <span className={color}>{formatPercent(roi)}</span>;
         },
@@ -118,15 +120,15 @@ const columns: ColumnDef<Item>[] = [
         header: 'Trend',
         cell: ({ row }) => {
             const trend = row.original.trend_direction;
-            if (trend === 'up') return <ArrowUp className="text-profit-positive" />;
-            if (trend === 'down') return <ArrowDown className="text-profit-negative" />;
+            if (trend === 'Up') return <ArrowUp className="text-profit-positive" />;
+            if (trend === 'Down') return <ArrowDown className="text-profit-negative" />;
             return <Minus className="text-gray-500" />;
         },
     },
     {
         accessorKey: 'last_updated',
         header: 'Last Updated',
-        cell: ({ row }) => new Date(row.original.last_updated).toLocaleString(),
+        cell: ({ row }) => row.original.last_updated ? new Date(row.original.last_updated).toLocaleString() : 'N/A',
     },
 ];
 
@@ -138,11 +140,15 @@ const TopItemsTable = () => {
     const { data: items, isLoading, error } = useQuery({
         queryKey: ['topItems', region],
         queryFn: () => getTopItems(region),
+        refetchInterval: 30000, // Refetch every 30 seconds to get updated analysis
     });
 
     const filteredItems = useMemo(() => {
         if (!items) return [];
-        return items.filter(item => item.roi_percent >= minRoi && item.volume_30d_avg >= minVolume);
+        return items.filter(item =>
+            (item.roi_percent !== null && item.roi_percent >= minRoi) &&
+            (item.volume_30d_avg !== null && item.volume_30d_avg >= minVolume)
+        );
     }, [items, minRoi, minVolume]);
 
     const table = useReactTable({
@@ -156,8 +162,8 @@ const TopItemsTable = () => {
         },
     });
 
-    if (isLoading) return <TableSkeleton />;
-    if (error) return <p>Error loading data</p>;
+    if (isLoading && !items) return <TableSkeleton />;
+    if (error) return <p className="text-center text-profit-negative p-4">Error loading market data. Please check the system status.</p>;
 
     return (
         <div className="bg-panel rounded-2xl shadow-lg overflow-hidden">
@@ -174,19 +180,27 @@ const TopItemsTable = () => {
                     ))}
                 </thead>
                 <tbody className="divide-y divide-gray-700/50">
-                    {table.getRowModel().rows.map((row) => (
-                        <tr
-                            key={row.id}
-                            className="hover:bg-gray-700/50 cursor-pointer"
-                            onClick={() => openModal(row.original.type_id)}
-                        >
-                            {row.getVisibleCells().map((cell) => (
-                                <td key={cell.id} className="px-6 py-4 whitespace-nowrap">
-                                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                </td>
-                            ))}
+                    {table.getRowModel().rows.length > 0 ? (
+                        table.getRowModel().rows.map((row) => (
+                            <tr
+                                key={row.id}
+                                className="hover:bg-gray-700/50 cursor-pointer"
+                                onClick={() => openModal(row.original.type_id)}
+                            >
+                                {row.getVisibleCells().map((cell) => (
+                                    <td key={cell.id} className="px-6 py-4 whitespace-nowrap">
+                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))
+                    ) : (
+                        <tr>
+                            <td colSpan={columns.length} className="text-center p-8 text-gray-500">
+                                {isLoading ? 'Refreshing data...' : 'No items match the current filters. Analysis may still be in progress for new data.'}
+                            </td>
                         </tr>
-                    ))}
+                    )}
                 </tbody>
             </table>
         </div>

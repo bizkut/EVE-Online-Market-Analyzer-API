@@ -9,20 +9,20 @@ const api = axios.create({
 export interface Item {
   type_id: number;
   name: string;
-  avg_buy_price: number;
-  avg_sell_price: number;
-  predicted_buy_price: number;
-  predicted_sell_price: number;
-  profit_per_unit: number;
-  roi_percent: number;
-  volume_30d_avg: number;
-  volatility: number;
-  trend_direction: string;
-  last_updated: string;
+  avg_buy_price: number | null;
+  avg_sell_price: number | null;
+  predicted_buy_price: number | null;
+  predicted_sell_price: number | null;
+  profit_per_unit: number | null;
+  roi_percent: number | null;
+  volume_30d_avg: number | null;
+  volatility: number | null;
+  trend_direction: string | null;
+  last_updated: string | null;
 }
 
 export interface ItemDetail extends Item {
-  description: string;
+  description: string | null;
   thumbnail_url: string;
   price_history: { date: string; buy: number; sell: number }[];
   volume_history: { date: string; volume: number }[];
