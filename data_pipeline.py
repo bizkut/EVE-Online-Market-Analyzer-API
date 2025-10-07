@@ -41,6 +41,7 @@ async def process_market_orders():
     into the database. Also removes orders that are no longer active.
     """
     logger.info("Starting ESI market order processing...")
+    set_status("pipeline_status", "running:market_orders")
     processing_start_time = datetime.now(timezone.utc)
     all_orders = []
 
@@ -132,6 +133,7 @@ async def process_market_history():
     On subsequent runs, it only fetches data since the last recorded date.
     """
     logger.info("Starting market history processing...")
+    set_status("pipeline_status", "running:market_history")
 
     latest_db_date = get_latest_history_date()
     # Fetch data only up to yesterday to avoid 404 errors for today's unpublished data
@@ -248,6 +250,7 @@ async def run_data_pipeline():
 
     # After fetching, clean up old data
     cleanup_old_data()
+    set_status("last_data_update", datetime.now(timezone.utc).isoformat())
     logger.info("Data pipeline run finished.")
 
 @celery_app.task(name="data_pipeline.run_data_pipeline_task")
