@@ -29,6 +29,9 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: always
+    dns:
+      - "8.8.8.8"
+      - "8.8.4.4"
     env_file:
       - .env
     ports:
@@ -44,6 +47,9 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: always
+    dns:
+      - "8.8.8.8"
+      - "8.8.4.4"
     env_file:
       - .env
     command: ["celery", "-A", "celery_app", "worker", "--loglevel=info"]
@@ -58,6 +64,9 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: always
+    dns:
+      - "8.8.8.8"
+      - "8.8.4.4"
     env_file:
       - .env
     command: ["celery", "-A", "celery_app", "beat", "--loglevel=info"]
@@ -71,13 +80,11 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
     restart: always
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+      - INTERNAL_API_BASE_URL=http://backend:8000
     depends_on:
       - backend
 
