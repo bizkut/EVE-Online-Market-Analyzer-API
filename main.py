@@ -24,6 +24,7 @@ import analysis
 import predict
 import data_pipeline
 import esi_utils
+import system_status
 from database import get_db_connection, engine
 from celery_app import celery_app
 
@@ -70,12 +71,12 @@ class RefreshStatus(BaseModel):
     status: str
     message: str
 
-class SystemStatus(BaseModel):
-    service: str = "EVE Online Market API"
-    status: str
-    latest_market_order_update: Optional[datetime]
-    latest_market_history_update: Optional[datetime]
-    latest_analysis_update: Optional[datetime]
+class SystemStatusResponse(BaseModel):
+    service_name: str = "EVE Online Market API"
+    pipeline_status: str
+    initial_seeding_complete: bool
+    last_data_update: Optional[str]
+    last_analysis_update: Optional[str]
 
 class Region(BaseModel):
     region_id: int
@@ -86,6 +87,7 @@ class Region(BaseModel):
 async def lifespan(app: FastAPI):
     # On startup
     logger.info("Application startup...")
+    await run_in_threadpool(system_status.initialize_status_table)
     esi_utils.pre_populate_caches_from_db()
 
     # Initialize Redis cache
@@ -281,33 +283,27 @@ async def force_refresh():
         logger.error(f"Failed to trigger Celery refresh task: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start refresh: {e}")
 
-@app.get("/api/status", response_model=SystemStatus)
+@app.get("/api/status", response_model=SystemStatusResponse)
 def get_system_status():
+    """
+    Returns the current status of the data pipeline and analysis tasks.
+    """
     try:
-        with get_db_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT MAX(http_last_modified) FROM market_orders;")
-            latest_order_update = cur.fetchone()[0]
-            cur.execute("SELECT MAX(date) FROM market_history;")
-            latest_history_update = cur.fetchone()[0]
-            cur.execute("SELECT MAX(last_updated) FROM market_analysis;")
-            latest_analysis_update = cur.fetchone()[0]
-            cur.close()
+        pipeline_status = system_status.get_status("pipeline_status", "idle")
+        seeding_complete_str = system_status.get_status("initial_seeding_complete", "false")
+        seeding_complete = seeding_complete_str.lower() == 'true'
+        last_data_update = system_status.get_status("last_data_update", None)
+        last_analysis_update = system_status.get_status("last_analysis_update", None)
 
-        return SystemStatus(
-            status="online",
-            latest_market_order_update=latest_order_update,
-            latest_market_history_update=latest_history_update,
-            latest_analysis_update=latest_analysis_update
+        return SystemStatusResponse(
+            pipeline_status=pipeline_status,
+            initial_seeding_complete=seeding_complete,
+            last_data_update=last_data_update,
+            last_analysis_update=last_analysis_update
         )
     except Exception as e:
         logger.error(f"Error getting system status: {e}", exc_info=True)
-        return SystemStatus(
-            status="error",
-            latest_market_order_update=None,
-            latest_market_history_update=None,
-            latest_analysis_update=None
-        )
+        raise HTTPException(status_code=500, detail="Error fetching system status.")
 
 @app.get("/api/regions", response_model=List[Region])
 async def get_regions():
