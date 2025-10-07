@@ -10,9 +10,17 @@ import esi_utils # To get active regions
 import asyncio
 from celery_app import celery_app
 from system_status import set_status
+import redis
+import os
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
+
+# --- Redis Lock Configuration ---
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+redis_client = redis.from_url(REDIS_URL)
+ANALYSIS_LOCK_KEY = "celery_analysis_lock"
+LOCK_TIMEOUT = 60 * 55  # 55 minutes, less than the 1-hour task schedule
 
 # --- Constants ---
 BROKER_FEE = 0.01  # 1%
@@ -223,7 +231,15 @@ async def run_analysis():
 
 @celery_app.task(name="analysis.run_analysis_task")
 def run_analysis_task():
-    """Celery task to run the market analysis for all regions."""
+    """
+    Celery task to run the market analysis for all regions.
+    Uses a Redis lock to prevent concurrent runs.
+    """
+    lock = redis_client.lock(ANALYSIS_LOCK_KEY, timeout=LOCK_TIMEOUT)
+    if not lock.acquire(blocking=False):
+        logger.info("Analysis task is already running. Skipping execution.")
+        return
+
     logger.info("Executing run_analysis_task via Celery.")
     set_status("pipeline_status", "running:analysis")
     try:
@@ -238,6 +254,8 @@ def run_analysis_task():
         from system_status import get_status
         if "running" not in get_status("pipeline_status", default=""):
              set_status("pipeline_status", "idle")
+        lock.release()
+        logger.info("Released analysis task lock.")
 
 if __name__ == '__main__':
     logger.info("Running standalone market analysis for all regions...")
