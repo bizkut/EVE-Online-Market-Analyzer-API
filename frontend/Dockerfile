@@ -13,11 +13,6 @@ RUN yarn install --frozen-lockfile
 # Copy the rest of the application source code
 COPY . .
 
-# Set the build-time argument
-ARG NEXT_PUBLIC_API_BASE_URL
-
-# Set the environment variable for the build
-ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
 # Build the Next.js application
 RUN yarn build
