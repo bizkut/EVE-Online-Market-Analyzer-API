@@ -11,6 +11,7 @@ from esi_utils import get_all_regions, fetch_esi_paginated, ESI_BASE_URL
 import logging
 import logging_config  # Ensure logging is configured
 from celery_app import celery_app
+from system_status import set_status
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -253,8 +254,15 @@ async def run_data_pipeline():
 def run_data_pipeline_task():
     """Celery task to run the full data pipeline."""
     logger.info("Executing run_data_pipeline_task via Celery.")
-    asyncio.run(run_data_pipeline())
-    logger.info("Celery run_data_pipeline_task finished.")
+    set_status("pipeline_status", "running:data_pipeline")
+    try:
+        asyncio.run(run_data_pipeline())
+        set_status("pipeline_status", "idle")
+        set_status("initial_seeding_complete", "true")
+        logger.info("Celery run_data_pipeline_task finished successfully.")
+    except Exception as e:
+        logger.error(f"Data pipeline task failed: {e}", exc_info=True)
+        set_status("pipeline_status", f"failed: {e}")
 
 if __name__ == "__main__":
     # This allows running the script directly for testing or manual runs

@@ -9,6 +9,7 @@ from psycopg2.extras import execute_values
 import esi_utils # To get active regions
 import asyncio
 from celery_app import celery_app
+from system_status import set_status
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -224,8 +225,19 @@ async def run_analysis():
 def run_analysis_task():
     """Celery task to run the market analysis for all regions."""
     logger.info("Executing run_analysis_task via Celery.")
-    asyncio.run(run_analysis())
-    logger.info("Celery run_analysis_task finished.")
+    set_status("pipeline_status", "running:analysis")
+    try:
+        asyncio.run(run_analysis())
+        set_status("last_analysis_update", datetime.now(timezone.utc).isoformat())
+        logger.info("Celery run_analysis_task finished successfully.")
+    except Exception as e:
+        logger.error(f"Analysis task failed: {e}", exc_info=True)
+        set_status("pipeline_status", f"failed: {e}")
+    finally:
+        # Set status to idle only if the pipeline is not still running
+        from system_status import get_status
+        if "running" not in get_status("pipeline_status", default=""):
+             set_status("pipeline_status", "idle")
 
 if __name__ == '__main__':
     logger.info("Running standalone market analysis for all regions...")

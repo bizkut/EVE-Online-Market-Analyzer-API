@@ -30,10 +30,10 @@ export interface ItemDetail extends Item {
 }
 
 export interface Status {
-  status: string;
-  last_data_refresh: string;
-  total_items_analyzed: number;
-  system_uptime: string;
+  pipeline_status: string;
+  initial_seeding_complete: boolean;
+  last_data_update: string | null;
+  last_analysis_update: string | null;
 }
 
 export const getTopItems = async (region: string = '10000002', limit: number = 100): Promise<Item[]> => {

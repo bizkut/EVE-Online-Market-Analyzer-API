@@ -1,5 +1,4 @@
 import React from 'react';
-import StatusBar from './StatusBar';
 import ThemeToggle from './ThemeToggle';
 
 interface LayoutProps {
@@ -18,7 +17,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <main className="p-4 sm:p-6 lg:p-8 flex-grow container mx-auto">
         {children}
       </main>
-      <StatusBar />
     </div>
   );
 };
