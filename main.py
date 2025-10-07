@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import logging
 import logging_config  # Ensure logging is configured
 import pandas as pd
+import math
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -161,6 +162,20 @@ app = FastAPI(
 )
 
 # --- API Endpoints ---
+def sanitize_float(value) -> Optional[float]:
+    """Replaces NaN, inf, or -inf with None to ensure JSON compliance."""
+    if value is None:
+        return None
+    try:
+        # Check for NaN, infinity, or negative infinity
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return float(value)
+    except (ValueError, TypeError):
+        # If it's not a number-like type that can be checked, return None
+        return None
+
+
 def map_trend_direction(value: Optional[int]) -> Optional[str]:
     if value is None:
         return None
@@ -211,15 +226,15 @@ async def get_top_items(
             return Item(
                 type_id=item['type_id'],
                 name=item_details['name'],
-                avg_buy_price=item.get('avg_buy_price'),
-                avg_sell_price=item.get('avg_sell_price'),
-                predicted_buy_price=prediction_result.get('predicted_buy_price'),
-                predicted_sell_price=prediction_result.get('predicted_sell_price'),
-                profit_per_unit=item.get('profit_per_unit'),
-                roi_percent=item.get('roi_percent'),
-                volume_30d_avg=item.get('avg_daily_volume'), # Field name mapping
-                volatility=item.get('volatility_30d'), # Field name mapping
-                trend_direction=map_trend_direction(item.get('trend_direction')), # Value mapping
+                avg_buy_price=sanitize_float(item.get('avg_buy_price')),
+                avg_sell_price=sanitize_float(item.get('avg_sell_price')),
+                predicted_buy_price=sanitize_float(prediction_result.get('predicted_buy_price')),
+                predicted_sell_price=sanitize_float(prediction_result.get('predicted_sell_price')),
+                profit_per_unit=sanitize_float(item.get('profit_per_unit')),
+                roi_percent=sanitize_float(item.get('roi_percent')),
+                volume_30d_avg=sanitize_float(item.get('avg_daily_volume')),
+                volatility=sanitize_float(item.get('volatility_30d')),
+                trend_direction=map_trend_direction(item.get('trend_direction')),
                 last_updated=item.get('last_updated')
             )
 
@@ -257,20 +272,35 @@ async def get_item_details(type_id: int, region_id: int = Query(10000002)):
     profit_history = []
     if not history_df.empty:
         price_history = [
-            PriceHistoryItem(date=row['date'].strftime('%Y-%m-%d'), buy=row['lowest'], sell=row['highest'])
-            for _, row in history_df.iterrows()
+            PriceHistoryItem(
+                date=row['date'].strftime('%Y-%m-%d'),
+                buy=sanitize_float(row['lowest']),
+                sell=sanitize_float(row['highest'])
+            ) for _, row in history_df.iterrows()
         ]
         volume_history = [
             VolumeHistoryItem(date=row['date'].strftime('%Y-%m-%d'), volume=row['volume'])
             for _, row in history_df.iterrows()
         ]
+
+        def calculate_profit(row):
+            profit = 0
+            if row['highest'] and row['lowest']:
+                profit = row['highest'] - row['lowest']
+            return sanitize_float(profit)
+
+        def calculate_roi(row):
+            roi = 0
+            if row['lowest'] and row['highest'] and row['lowest'] > 0:
+                roi = ((row['highest'] - row['lowest']) / row['lowest']) * 100
+            return sanitize_float(roi)
+
         profit_history = [
             ProfitHistoryItem(
                 date=row['date'].strftime('%Y-%m-%d'),
-                profit_per_unit=(row['highest'] - row['lowest']) if row['highest'] and row['lowest'] else 0,
-                roi_percent=((row['highest'] - row['lowest']) / row['lowest'] * 100) if row['lowest'] and row['highest'] else 0
-            )
-            for _, row in history_df.iterrows()
+                profit_per_unit=calculate_profit(row),
+                roi_percent=calculate_roi(row)
+            ) for _, row in history_df.iterrows()
         ]
 
     # Concurrently fetch prediction and ESI item details
@@ -283,14 +313,14 @@ async def get_item_details(type_id: int, region_id: int = Query(10000002)):
         name=esi_details['name'],
         description=esi_details.get('description'),
         thumbnail_url=f"https://images.evetech.net/types/{type_id}/icon?size=128",
-        avg_buy_price=item_analysis.get('avg_buy_price'),
-        avg_sell_price=item_analysis.get('avg_sell_price'),
-        predicted_buy_price=prediction_result.get('predicted_buy_price'),
-        predicted_sell_price=prediction_result.get('predicted_sell_price'),
-        profit_per_unit=item_analysis.get('profit_per_unit'),
-        roi_percent=item_analysis.get('roi_percent'),
-        volume_30d_avg=item_analysis.get('avg_daily_volume'),
-        volatility=item_analysis.get('volatility_30d'),
+        avg_buy_price=sanitize_float(item_analysis.get('avg_buy_price')),
+        avg_sell_price=sanitize_float(item_analysis.get('avg_sell_price')),
+        predicted_buy_price=sanitize_float(prediction_result.get('predicted_buy_price')),
+        predicted_sell_price=sanitize_float(prediction_result.get('predicted_sell_price')),
+        profit_per_unit=sanitize_float(item_analysis.get('profit_per_unit')),
+        roi_percent=sanitize_float(item_analysis.get('roi_percent')),
+        volume_30d_avg=sanitize_float(item_analysis.get('avg_daily_volume')),
+        volatility=sanitize_float(item_analysis.get('volatility_30d')),
         trend_direction=map_trend_direction(item_analysis.get('trend_direction')),
         last_updated=item_analysis.get('last_updated'),
         price_history=price_history,
