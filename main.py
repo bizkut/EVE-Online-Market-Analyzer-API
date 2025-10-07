@@ -25,6 +25,7 @@ import analysis
 import predict
 import data_pipeline
 import esi_utils
+import train_models
 import system_status
 from database import get_db_connection, engine
 from celery_app import celery_app
@@ -129,10 +130,11 @@ async def lifespan(app: FastAPI):
             history_exists = await run_in_threadpool(db_check)
 
             if not history_exists:
-                logger.info("No market history data found. Triggering initial data pipeline and analysis task chain via Celery.")
+                logger.info("No market history data found. Triggering initial data pipeline, analysis, and model training task chain via Celery.")
                 task_chain = (
                     data_pipeline.run_data_pipeline_task.s() |
-                    analysis.run_analysis_task.s()
+                    analysis.run_analysis_task.s() |
+                    train_models.run_model_training_task.s()
                 )
                 task_chain.apply_async()
             else:
