@@ -9,6 +9,8 @@ from psycopg2.extras import execute_values
 import esi_utils # To get active regions
 import asyncio
 from celery_app import celery_app
+import redis
+import os
 
 # --- Setup Logger ---
 logger = logging.getLogger(__name__)
@@ -216,15 +218,35 @@ async def run_analysis():
 
     logger.info("Completed market analysis for all active regions.")
 
+# --- Redis Client ---
+# It's better to initialize the client once and reuse it.
+redis_client = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+
+# --- Celery Task with Locking ---
+LOCK_KEY = "celery:run_analysis_task"
+LOCK_TIMEOUT = 60 * 55  # 55 minutes, slightly less than the 1-hour schedule
+
 @celery_app.task(name="analysis.run_analysis_task")
 def run_analysis_task():
-    """Celery task to run the market analysis for all regions."""
-    logger.info("Executing run_analysis_task via Celery.")
-    asyncio.run(run_analysis())
-    logger.info("Celery run_analysis_task finished.")
+    """
+    Celery task with a Redis-based lock to ensure only one instance runs at a time.
+    """
+    lock_acquired = redis_client.set(LOCK_KEY, "locked", nx=True, ex=LOCK_TIMEOUT)
+
+    if not lock_acquired:
+        logger.info("Another analysis task is already in progress. Skipping execution.")
+        return
+
+    try:
+        logger.info("Executing run_analysis_task via Celery.")
+        asyncio.run(run_analysis())
+        logger.info("Celery run_analysis_task finished.")
+    finally:
+        redis_client.delete(LOCK_KEY)
+        logger.info("Released analysis task lock.")
+
 
 if __name__ == '__main__':
     logger.info("Running standalone market analysis for all regions...")
-    # To run the async function from a synchronous main block
     asyncio.run(run_analysis())
     logger.info("Standalone market analysis finished.")
