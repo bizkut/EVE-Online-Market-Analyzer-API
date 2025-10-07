@@ -80,6 +80,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - INTERNAL_API_BASE_URL=http://backend:8000
     restart: always
     ports:
       - "3000:3000"

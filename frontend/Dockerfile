@@ -14,6 +14,10 @@ RUN yarn install --frozen-lockfile
 COPY . .
 
 
+# Make the build-time arg available as an environment variable
+ARG INTERNAL_API_BASE_URL
+ENV INTERNAL_API_BASE_URL=$INTERNAL_API_BASE_URL
+
 # Build the Next.js application
 RUN yarn build
 
