@@ -13,7 +13,8 @@ import VolumeChart from './VolumeChart';
 import ProfitEvolutionChart from './ProfitEvolutionChart';
 import { ModalSkeleton } from './SkeletonLoader';
 
-const formatCurrency = (num: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'ISK' }).format(num);
+const formatCurrency = (num: number | null) => num ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'ISK' }).format(num) : 'N/A';
+const formatPercent = (num: number | null) => num ? `${(num * 100).toFixed(2)}%` : 'N/A';
 
 const ItemDetailModal = () => {
   const { isOpen, closeModal, selectedItemId } = useModalStore();
@@ -25,9 +26,9 @@ const ItemDetailModal = () => {
   });
 
   const TrendIcon = () => {
-    if (!item) return null;
-    if (item.trend_direction === 'up') return <ArrowUp className="text-profit-positive" />;
-    if (item.trend_direction === 'down') return <ArrowDown className="text-profit-negative" />;
+    if (!item || !item.trend_direction) return <Minus className="text-gray-500" />;
+    if (item.trend_direction === 'Up') return <ArrowUp className="text-profit-positive" />;
+    if (item.trend_direction === 'Down') return <ArrowDown className="text-profit-negative" />;
     return <Minus className="text-gray-500" />;
   };
 
@@ -88,14 +89,14 @@ const ItemDetailModal = () => {
                         </div>
                         <div className="bg-background/50 p-3 rounded-lg">
                           <p className="text-sm text-gray-400">Volatility</p>
-                          <p className="text-lg font-bold text-white">{(item.volatility * 100).toFixed(2)}%</p>
+                          <p className="text-lg font-bold text-white">{formatPercent(item.volatility)}</p>
                         </div>
                         <div className="bg-background/50 p-3 rounded-lg flex flex-col justify-center items-center">
                           <p className="text-sm text-gray-400">Trend</p>
                           <TrendIcon />
                         </div>
                       </div>
-                      <p className="text-sm text-neutral-text italic">{item.description}</p>
+                      <p className="text-sm text-neutral-text italic">{item.description || 'No description available.'}</p>
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div className="bg-background/50 p-4 rounded-lg">
                           <h4 className="font-bold text-white mb-2">Price History</h4>
